@@ -419,6 +419,30 @@ export async function saveStudentDoc(student: Student): Promise<void> {
 }
 
 /**
+ * Update student presence timestamp (lastActiveAt) in real-time
+ */
+export async function updateStudentPresence(studentId: string): Promise<void> {
+  const now = new Date().toISOString();
+  // Update local storage cache
+  const students = getLocalStudents();
+  const idx = students.findIndex((s) => s.id === studentId);
+  if (idx > -1) {
+    students[idx] = { ...students[idx], lastActiveAt: now };
+    saveLocalStudents(students);
+  }
+
+  const db = await getFirebaseDb();
+  if (!db) return;
+
+  try {
+    const studentDocRef = doc(db, "students", studentId);
+    await setDoc(studentDocRef, { lastActiveAt: now }, { merge: true });
+  } catch (err) {
+    console.warn("Failed updating student presence timestamp:", err);
+  }
+}
+
+/**
  * Delete student record
  */
 export async function deleteStudentDoc(studentId: string): Promise<void> {

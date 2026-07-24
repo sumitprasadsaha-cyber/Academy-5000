@@ -118,6 +118,7 @@ export interface Student {
   password?: string;
   reports?: StudentReport[];
   chapterProgress?: Record<string, ChapterProgressData>; // key: `${subjectId}_${chapterId}` or `${chapterId}`
+  lastActiveAt?: string; // ISO timestamp of last app activity
   
   // AI Analysis additional dimensions
   testMarks?: TestMarkRecord[];

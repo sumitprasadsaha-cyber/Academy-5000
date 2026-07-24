@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { LayoutDashboard, Users, Settings as SettingsIcon, BookOpen, RefreshCw, Sparkles, Timer, Clock, FolderKanban } from "lucide-react";
+import { LayoutDashboard, Users, Settings as SettingsIcon, BookOpen, RefreshCw, Sparkles, Timer, Clock, FolderKanban, Radio } from "lucide-react";
 import { Student, ChapterNote, ClassNote } from "./types";
 import { INITIAL_STUDENTS } from "./data";
 import Dashboard from "./components/Dashboard";
@@ -7,6 +7,7 @@ import StudentList from "./components/StudentList";
 import StudentDetails from "./components/StudentDetails";
 import SubjectNotes from "./components/SubjectNotes";
 import AdminNotesView from "./components/AdminNotesView";
+import LiveStudentsView from "./components/LiveStudentsView";
 import AddEditStudentModal from "./components/AddEditStudentModal";
 import ProfilePictureModal from "./components/ProfilePictureModal";
 import StudyTimerModal from "./components/StudyTimerModal";
@@ -27,7 +28,8 @@ import {
   getLocalClassNotes,
   getLocalStudents,
   saveClassNoteDoc,
-  deleteClassNoteDoc
+  deleteClassNoteDoc,
+  updateStudentPresence
 } from "./lib/firestoreService";
 import { migrateLegacyNotesToClassNotes } from "./utils/classNoteHelper";
 import { deleteFileFromStorage, uploadProfilePhoto } from "./lib/storageService";
@@ -177,6 +179,51 @@ export default function App() {
     }
   }, [auth.isAuthenticated, auth.role, auth.loggedInStudentId]);
 
+  // Real-time Student Presence Heartbeat
+  useEffect(() => {
+    if (auth.role !== "student" || !auth.loggedInStudentId) return;
+
+    const studentId = auth.loggedInStudentId;
+
+    // Send immediate heartbeat on mount/login
+    updateStudentPresence(studentId);
+
+    // Heartbeat every 20s
+    const intervalId = setInterval(() => {
+      updateStudentPresence(studentId);
+    }, 20000);
+
+    // Ping on user activity/focus
+    let lastPing = Date.now();
+    const handleActivity = () => {
+      const now = Date.now();
+      if (now - lastPing > 15000) {
+        lastPing = now;
+        updateStudentPresence(studentId);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        updateStudentPresence(studentId);
+        lastPing = Date.now();
+      }
+    };
+
+    window.addEventListener("focus", handleActivity);
+    window.addEventListener("click", handleActivity, { passive: true });
+    window.addEventListener("keydown", handleActivity, { passive: true });
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener("focus", handleActivity);
+      window.removeEventListener("click", handleActivity);
+      window.removeEventListener("keydown", handleActivity);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [auth.role, auth.loggedInStudentId]);
+
   const handleLogin = (role: "admin" | "student", studentId: string | null) => {
     setAuth({
       isAuthenticated: true,
@@ -207,7 +254,7 @@ export default function App() {
   };
 
   // --- Navigation States ---
-  const [activeTab, setActiveTab] = useState<"Dashboard" | "Notes" | "Students" | "My" | "Settings">("Dashboard");
+  const [activeTab, setActiveTab] = useState<"Dashboard" | "LiveStudents" | "Notes" | "Students" | "My" | "Settings">("Dashboard");
   const [classNotes, setClassNotes] = useState<ClassNote[]>(() => getLocalClassNotes());
 
   // Subscribe to central class notes real-time updates
@@ -1177,6 +1224,15 @@ export default function App() {
             />
           )}
 
+          {activeTab === "LiveStudents" && (
+            <LiveStudentsView
+              students={students}
+              onRefresh={() => {
+                setStudents([...students]);
+              }}
+            />
+          )}
+
           {activeTab === "Notes" && (
             <AdminNotesView
               notes={classNotes}
@@ -1368,6 +1424,34 @@ export default function App() {
                 {auth.role === "student" ? "dashboard" : "Dashboard"}
               </span>
             </button>
+
+            {/* Nav Tab 2: Live Students (Admin only) */}
+            {auth.role === "admin" && (
+              <button
+                onClick={() => {
+                  setActiveTab("LiveStudents");
+                  setSelectedStudentId(null);
+                  setActiveSubject(null);
+                }}
+                className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all flex-1 py-1 ${
+                  activeTab === "LiveStudents"
+                    ? "text-emerald-600 dark:text-emerald-400 scale-102 font-bold"
+                    : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                }`}
+                id="nav-btn-live-students"
+              >
+                <div className="relative">
+                  <Radio className="w-5 h-5 stroke-[2]" />
+                  <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                </div>
+                <span className="text-[9px] sm:text-[10px] font-bold tracking-wider uppercase mt-0.5 flex items-center gap-1">
+                  🟢 Live
+                </span>
+              </button>
+            )}
 
             {/* Nav Tab 2: Notes (Admin only) */}
             {auth.role === "admin" && (
