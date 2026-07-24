@@ -29,7 +29,8 @@ import {
   getLocalStudents,
   saveClassNoteDoc,
   deleteClassNoteDoc,
-  updateStudentPresence
+  updateStudentPresence,
+  markStudentOffline
 } from "./lib/firestoreService";
 import { migrateLegacyNotesToClassNotes } from "./utils/classNoteHelper";
 import { deleteFileFromStorage, uploadProfilePhoto } from "./lib/storageService";
@@ -207,12 +208,20 @@ export default function App() {
       if (document.visibilityState === "visible") {
         updateStudentPresence(studentId);
         lastPing = Date.now();
+      } else if (document.visibilityState === "hidden") {
+        markStudentOffline(studentId);
       }
+    };
+
+    const handleUnload = () => {
+      markStudentOffline(studentId);
     };
 
     window.addEventListener("focus", handleActivity);
     window.addEventListener("click", handleActivity, { passive: true });
     window.addEventListener("keydown", handleActivity, { passive: true });
+    window.addEventListener("beforeunload", handleUnload);
+    window.addEventListener("pagehide", handleUnload);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
@@ -220,7 +229,10 @@ export default function App() {
       window.removeEventListener("focus", handleActivity);
       window.removeEventListener("click", handleActivity);
       window.removeEventListener("keydown", handleActivity);
+      window.removeEventListener("beforeunload", handleUnload);
+      window.removeEventListener("pagehide", handleUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      markStudentOffline(studentId);
     };
   }, [auth.role, auth.loggedInStudentId]);
 
@@ -236,6 +248,10 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (auth.role === "student" && auth.loggedInStudentId) {
+      markStudentOffline(auth.loggedInStudentId);
+    }
+
     // Sign out from Firebase
     getFirebaseAuth().then((firebaseAuth) => {
       if (firebaseAuth) {

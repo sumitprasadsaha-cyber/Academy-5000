@@ -443,6 +443,29 @@ export async function updateStudentPresence(studentId: string): Promise<void> {
 }
 
 /**
+ * Mark a student as offline (when logging out or closing app)
+ */
+export async function markStudentOffline(studentId: string): Promise<void> {
+  // Update local storage cache
+  const students = getLocalStudents();
+  const idx = students.findIndex((s) => s.id === studentId);
+  if (idx > -1) {
+    students[idx] = { ...students[idx], lastActiveAt: "" };
+    saveLocalStudents(students);
+  }
+
+  const db = await getFirebaseDb();
+  if (!db) return;
+
+  try {
+    const studentDocRef = doc(db, "students", studentId);
+    await setDoc(studentDocRef, { lastActiveAt: "" }, { merge: true });
+  } catch (err) {
+    console.warn("Failed marking student offline:", err);
+  }
+}
+
+/**
  * Delete student record
  */
 export async function deleteStudentDoc(studentId: string): Promise<void> {
