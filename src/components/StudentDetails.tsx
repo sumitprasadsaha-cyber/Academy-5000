@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import StudentAvatar from "./StudentAvatar";
-import { getInstitutionName, saveStudentDoc } from "../lib/firestoreService";
+import { getInstitutionName, saveStudentDoc, subscribeToClassNotes, getLocalClassNotes } from "../lib/firestoreService";
 import { uploadReportToStorage } from "../lib/storageService";
 import { saveAndOpenGeneratedPdf } from "../lib/nativePdfService";
 import { 
@@ -33,11 +33,11 @@ import {
   Trash2
 } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { Student } from "../types";
+import { Student, ClassNote } from "../types";
 import { getUnpaidOverdueMonths, MONTH_NAMES, isFutureMonth, hasAttendedInMonth } from "./StudentList";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { getMonthsUpToCurrent, ALL_ACADEMIC_MONTHS } from "../utils/monthHelper";
-import { getChapterProgressRecord, getStatusConfig } from "../utils/chapterProgressHelper";
+import { getChapterProgressRecord, getStatusConfig, calculateSubjectProgress } from "../utils/chapterProgressHelper";
 
 interface StudentDetailsProps {
   student: Student;
@@ -151,6 +151,11 @@ export default function StudentDetails({
   // Delete Chapter Note modal state
   const [deleteNoteTarget, setDeleteNoteTarget] = useState<{ subject: string; noteId: string } | null>(null);
   const [isDeletingNote, setIsDeletingNote] = useState(false);
+
+  const [allClassNotes, setAllClassNotes] = useState<ClassNote[]>(() => getLocalClassNotes());
+  useEffect(() => {
+    return subscribeToClassNotes((notes) => setAllClassNotes(notes));
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -386,33 +391,22 @@ export default function StudentDetails({
     return [...student.enrolledSubjects].sort((a, b) => a.localeCompare(b));
   }, [student.enrolledSubjects]);
 
-  // Calculate detailed chapters list derived from real subject notes & student.chapterProgress
+  // Calculate detailed chapters list derived from central classNotes, student.notes & chapterProgress
   const activeChaptersList = useMemo(() => {
     const subject = selectedProgressSubject;
     if (!subject) return [];
 
-    const realNotes = student.notes?.[subject] || [];
-
-    // Map each real note to the standardized format and sort by chapter number chronologically
-    const list = realNotes.map((note) => {
-      const progRecord = getChapterProgressRecord(note.id, subject, student.chapterProgress);
-      const statusConfig = progRecord ? getStatusConfig(progRecord.selectedStatus) : null;
-      const isCompleted = (statusConfig && statusConfig.category === "completed") || !!note.isCompleted;
-      const remark = progRecord?.remarks || note.remark || "";
-
-      return {
-        chapterNo: note.chapterNo,
-        chapterName: note.chapterName,
-        isReal: true,
-        id: note.id,
-        isCompleted,
-        remark,
-        pdfFileName: note.pdfFileName
-      };
-    });
-
-    return list.sort((a, b) => (a.chapterNo || 0) - (b.chapterNo || 0));
-  }, [student.notes, student.chapterProgress, selectedProgressSubject]);
+    const summary = calculateSubjectProgress(subject, student, allClassNotes, isAdmin);
+    return summary.chapters.map((c) => ({
+      chapterNo: c.chapterNo,
+      chapterName: c.chapterName,
+      isReal: true,
+      id: c.notes[0]?.id || `ch-${c.chapterNo}`,
+      isCompleted: c.isCompleted,
+      remark: c.remark,
+      pdfFileName: c.notes.map((n) => n.pdfFileName).filter(Boolean).join(", ")
+    })).sort((a, b) => (a.chapterNo || 0) - (b.chapterNo || 0));
+  }, [selectedProgressSubject, student, allClassNotes, isAdmin]);
 
   // Subject-specific and collective progress indicators
   const subjectCompletionStats = useMemo(() => {
@@ -422,35 +416,23 @@ export default function StudentDetails({
     return { total, completed, percent };
   }, [activeChaptersList]);
 
-  // Collective Academic Standing & Progress Percentage calculated from real notes & chapterProgress
+  // Collective Academic Standing & Progress Percentage calculated from chapters (excluding parts)
   const collectiveProgressStats = useMemo(() => {
     let grandTotal = 0;
     let grandCompleted = 0;
     const subjectBreakdown: Record<string, { total: number; completed: number; percent: number; remark: string }> = {};
 
     sortedEnrolledSubjects.forEach(subject => {
-      const realNotes = student.notes?.[subject] || [];
-      const total = realNotes.length;
-      let completed = 0;
-      let topRemark = "";
+      const summary = calculateSubjectProgress(subject, student, allClassNotes, isAdmin);
+      grandTotal += summary.total;
+      grandCompleted += summary.completed;
 
-      realNotes.forEach(note => {
-        const progRecord = getChapterProgressRecord(note.id, subject, student.chapterProgress);
-        const statusConfig = progRecord ? getStatusConfig(progRecord.selectedStatus) : null;
-        const isCompleted = (statusConfig && statusConfig.category === "completed") || !!note.isCompleted;
-        const remark = progRecord?.remarks || note.remark || "";
-
-        if (isCompleted) completed++;
-        if (remark && !topRemark) topRemark = remark;
-      });
-
-      grandTotal += total;
-      grandCompleted += completed;
+      const topRemark = summary.chapters.find((c) => c.remark)?.remark || "";
 
       subjectBreakdown[subject] = {
-        total,
-        completed,
-        percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+        total: summary.total,
+        completed: summary.completed,
+        percent: summary.rate,
         remark: topRemark || "On track with syllabus review."
       };
     });
@@ -596,27 +578,33 @@ export default function StudentDetails({
       
       currentY += 14;
       
-      const realNotes = student.notes?.[subject] || [];
-      const defaultTemplates = DEFAULT_CHAPTER_TEMPLATES[subject] || [
-        "Introduction & Structural Core",
-        "Foundational Conceptual Models",
-        "Practical Exercise Solutions",
-        "Advanced Application Methods",
-        "Comprehensive Revision Guide"
-      ];
-      
-      // Merge templates and real notes so all chapters are printed
-      const allChapters = defaultTemplates.map((name, idx) => {
-        const matchingReal = realNotes.find(rn => rn.chapterNo === idx + 1 || rn.chapterName === name);
-        return {
+      const summary = calculateSubjectProgress(subject, student, allClassNotes, isAdmin);
+      let chaptersToPrint = summary.chapters.map((c) => ({
+        chapterNo: c.chapterNo,
+        chapterName: c.chapterName,
+        statusLabel: c.statusLabel,
+        isCompleted: c.isCompleted,
+        remark: c.remark
+      }));
+
+      if (chaptersToPrint.length === 0) {
+        const defaultTemplates = DEFAULT_CHAPTER_TEMPLATES[subject] || [
+          "Introduction & Structural Core",
+          "Foundational Conceptual Models",
+          "Practical Exercise Solutions",
+          "Advanced Application Methods",
+          "Comprehensive Revision Guide"
+        ];
+        chaptersToPrint = defaultTemplates.map((name, idx) => ({
           chapterNo: idx + 1,
           chapterName: name,
-          isCompleted: matchingReal ? !!matchingReal.isCompleted : false,
-          remark: matchingReal ? (matchingReal.remark || "") : ""
-        };
-      });
-      
-      allChapters.forEach((ch) => {
+          statusLabel: "Pending",
+          isCompleted: false,
+          remark: ""
+        }));
+      }
+
+      chaptersToPrint.forEach((ch) => {
         if (currentY > 270) {
           doc.addPage();
           currentY = 20;
