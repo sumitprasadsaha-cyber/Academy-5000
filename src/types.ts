@@ -16,6 +16,7 @@ export interface ClassNote {
   // Student Access Control metadata
   accessType?: "all" | "selected";
   allowedStudentIds?: string[];
+  allowedClasses?: string[];
 }
 
 export interface ChapterNote {
@@ -32,6 +33,7 @@ export interface ChapterNote {
   // Student Access Control metadata
   accessType?: "all" | "selected";
   allowedStudentIds?: string[];
+  allowedClasses?: string[];
 
   // Supabase storage metadata
   storageProvider?: "supabase";

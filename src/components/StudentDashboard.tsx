@@ -1638,8 +1638,14 @@ export function StudentMyTab({
 
   const sortedSubjects = useMemo(() => {
     const enrolled = localStudent.enrolledSubjects || [];
-    return [...enrolled].sort((a, b) => a.localeCompare(b));
-  }, [localStudent.enrolledSubjects]);
+    const subjectsSet = new Set<string>(enrolled);
+    studentClassNotes.forEach((cn) => {
+      if (cn.subject && cn.subject.trim()) {
+        subjectsSet.add(cn.subject.trim());
+      }
+    });
+    return Array.from(subjectsSet).sort((a, b) => a.localeCompare(b));
+  }, [localStudent.enrolledSubjects, studentClassNotes]);
 
   const handleSaveRemark = (note: ChapterNote) => {
     const draft = (remarkDrafts[note.id] ?? note.remark ?? "").trim();

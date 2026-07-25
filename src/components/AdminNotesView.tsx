@@ -93,10 +93,15 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [deletingNote, setDeletingNote] = useState<ClassNote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Manage Access Modal state
-  const [manageAccessNote, setManageAccessNote] = useState<ClassNote | null>(null);
-  const [accessType, setAccessType] = useState<"all" | "selected">("all");
-  const [allowedStudentIds, setAllowedStudentIds] = useState<string[]>([]);
+  // Manage Access Modal state (Chapter-level)
+  const [manageAccessChapter, setManageAccessChapter] = useState<{
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    parts: ClassNote[];
+  } | null>(null);
+  const [selectedClassesForAccess, setSelectedClassesForAccess] = useState<string[]>([]);
   const [isSavingAccess, setIsSavingAccess] = useState(false);
   const [accessMsg, setAccessMsg] = useState("");
 
@@ -128,53 +133,101 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setExpandedChapters((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
   };
 
-  const handleOpenManageAccess = (note: ClassNote) => {
-    setManageAccessNote(note);
-    setAccessType(note.accessType || "all");
-    setAllowedStudentIds(note.allowedStudentIds || []);
+  // All unique available classes for selection
+  const allAvailableClasses = useMemo(() => {
+    const classesSet = new Set<string>(DEFAULT_CLASSES);
+    (students || []).forEach((s) => {
+      if (s.classGrade) {
+        classesSet.add(normalizeClassGrade(s.classGrade));
+      }
+    });
+    return Array.from(classesSet).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      if (numA !== numB) return numA - numB;
+      return a.localeCompare(b);
+    });
+  }, [students]);
+
+  const handleOpenManageAccessForChapter = (
+    classGrade: string,
+    subject: string,
+    chGroup: { chapterNo: number; chapterName: string; parts: ClassNote[] }
+  ) => {
+    setManageAccessChapter({
+      classGrade,
+      subject,
+      chapterNo: chGroup.chapterNo,
+      chapterName: chGroup.chapterName,
+      parts: chGroup.parts,
+    });
+
+    const firstNote = chGroup.parts[0];
+    if (firstNote?.allowedClasses && Array.isArray(firstNote.allowedClasses) && firstNote.allowedClasses.length > 0) {
+      setSelectedClassesForAccess(firstNote.allowedClasses.map((c) => normalizeClassGrade(c)));
+    } else if (firstNote?.allowedStudentIds && firstNote.allowedStudentIds.length > 0 && students) {
+      const studentClasses = new Set<string>();
+      students.forEach((s) => {
+        if (firstNote.allowedStudentIds?.includes(s.id) && s.classGrade) {
+          studentClasses.add(normalizeClassGrade(s.classGrade));
+        }
+      });
+      if (studentClasses.size > 0) {
+        setSelectedClassesForAccess(Array.from(studentClasses));
+      } else {
+        setSelectedClassesForAccess([normalizeClassGrade(classGrade)]);
+      }
+    } else {
+      setSelectedClassesForAccess([normalizeClassGrade(classGrade)]);
+    }
     setAccessMsg("");
   };
 
-  const handleToggleStudentAccess = (studentId: string) => {
-    setAllowedStudentIds((prev) =>
-      prev.includes(studentId)
-        ? prev.filter((id) => id !== studentId)
-        : [...prev, studentId]
+  const handleToggleClassForAccess = (cls: string) => {
+    const normClass = normalizeClassGrade(cls);
+    setSelectedClassesForAccess((prev) =>
+      prev.includes(normClass)
+        ? prev.filter((c) => c !== normClass)
+        : [...prev, normClass]
     );
   };
 
-  const handleSelectAllStudentsInClass = () => {
-    if (!manageAccessNote) return;
-    const targetClass = normalizeClassGrade(manageAccessNote.classGrade);
-    const classStudents = students.filter(
-      (s) => normalizeClassGrade(s.classGrade) === targetClass
-    );
-    setAllowedStudentIds(classStudents.map((s) => s.id));
+  const handleSelectAllClasses = () => {
+    setSelectedClassesForAccess([...allAvailableClasses]);
   };
 
-  const handleDeselectAllStudents = () => {
-    setAllowedStudentIds([]);
+  const handleClearAllClasses = () => {
+    setSelectedClassesForAccess([]);
   };
 
   const handleSaveManageAccess = async () => {
-    if (!manageAccessNote) return;
+    if (!manageAccessChapter) return;
     setIsSavingAccess(true);
     setAccessMsg("");
     try {
-      const updated: ClassNote = {
-        ...manageAccessNote,
-        accessType,
-        allowedStudentIds: accessType === "selected" ? allowedStudentIds : [],
-        updatedAt: new Date().toISOString(),
-      };
-      await saveClassNoteDoc(updated);
-      setAccessMsg("Access permissions updated successfully!");
+      const normalizedSelected = selectedClassesForAccess.map((c) => normalizeClassGrade(c).toLowerCase());
+      const matchedStudentIds = (students || [])
+        .filter((s) => normalizedSelected.includes(normalizeClassGrade(s.classGrade).toLowerCase()))
+        .map((s) => s.id);
+
+      for (const note of manageAccessChapter.parts) {
+        const updated: ClassNote = {
+          ...note,
+          accessType: "selected",
+          allowedClasses: selectedClassesForAccess,
+          allowedStudentIds: matchedStudentIds,
+          updatedAt: new Date().toISOString(),
+        };
+        await saveClassNoteDoc(updated);
+      }
+
+      setAccessMsg(`Permissions saved successfully! Shared with ${selectedClassesForAccess.length} class(es).`);
       if (onRefresh) onRefresh();
       setTimeout(() => {
-        setManageAccessNote(null);
-      }, 800);
+        setManageAccessChapter(null);
+      }, 900);
     } catch (err: any) {
-      setAccessMsg(err?.message || "Failed to update permissions.");
+      setAccessMsg(err?.message || "Failed to save permissions.");
     } finally {
       setIsSavingAccess(false);
     }
@@ -648,13 +701,13 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                     className="bg-slate-50 dark:bg-slate-900/80 rounded-xl border border-slate-200/70 dark:border-slate-700/70 overflow-hidden shadow-2xs"
                                   >
                                     {/* Chapter number with name on same row (collapsible trigger) */}
-                                    <button
-                                      type="button"
-                                      onClick={() => toggleChapterExpand(chKey)}
-                                      className="w-full px-3.5 py-2.5 bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200/60 dark:hover:bg-slate-800 flex items-start justify-between cursor-pointer text-left transition-colors gap-3"
-                                    >
-                                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                                        <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                                    <div className="w-full px-3.5 py-2.5 bg-slate-100/80 dark:bg-slate-800/80 flex items-center justify-between transition-colors gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleChapterExpand(chKey)}
+                                        className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer text-left"
+                                      >
+                                        <BookOpen className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                                         <div className="flex flex-col min-w-0">
                                           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                             <span className="text-xs font-black text-indigo-700 dark:text-indigo-300 shrink-0">
@@ -665,18 +718,36 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                             </span>
                                           </div>
                                         </div>
-                                      </div>
-                                      <div className="flex items-center gap-2 shrink-0 self-center">
+                                      </button>
+
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        {/* Manage Access Button for Chapter */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenManageAccessForChapter(clsGroup.classGrade, subjGroup.subject, chGroup)}
+                                          className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/80 border border-blue-200 dark:border-blue-800/60 transition-all cursor-pointer text-xs font-bold flex items-center gap-1.5 shadow-2xs"
+                                          title="Manage Student Access / Permissions for this Chapter"
+                                        >
+                                          <ShieldCheck className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                                          <span className="hidden sm:inline">Manage Access</span>
+                                        </button>
+
                                         <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                                           {chGroup.parts.length} {chGroup.parts.length === 1 ? "Part" : "Parts"}
                                         </span>
-                                        {isChExpanded ? (
-                                          <ChevronDown className="w-4 h-4 text-slate-400" />
-                                        ) : (
-                                          <ChevronRight className="w-4 h-4 text-slate-400" />
-                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleChapterExpand(chKey)}
+                                          className="p-1 hover:bg-slate-200/60 dark:hover:bg-slate-700/60 rounded cursor-pointer"
+                                        >
+                                          {isChExpanded ? (
+                                            <ChevronDown className="w-4 h-4 text-slate-400" />
+                                          ) : (
+                                            <ChevronRight className="w-4 h-4 text-slate-400" />
+                                          )}
+                                        </button>
                                       </div>
-                                    </button>
+                                    </div>
 
                                     {/* Parts (collapsible) (arranged in ascending order as per part no.) */}
                                     {isChExpanded && (
@@ -706,11 +777,15 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                                     Uploaded {new Date(note.createdAt).toLocaleDateString()}
                                                   </span>
                                                   <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.2 rounded ${
-                                                    note.accessType === "selected" 
+                                                    (note.allowedClasses && note.allowedClasses.length > 0) || note.accessType === "selected"
                                                       ? "bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400" 
                                                       : "bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400"
                                                   }`}>
-                                                    {note.accessType === "selected" ? `${note.allowedStudentIds?.length || 0} Students` : "All Students"}
+                                                    {note.allowedClasses && note.allowedClasses.length > 0
+                                                      ? `${note.allowedClasses.length} Class${note.allowedClasses.length === 1 ? '' : 'es'}`
+                                                      : note.accessType === "selected"
+                                                      ? `${note.allowedStudentIds?.length || 0} Students`
+                                                      : "All Students"}
                                                   </span>
                                                 </div>
                                               </div>
@@ -730,15 +805,6 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                                 title="View PDF"
                                               >
                                                 <Eye className="w-3.5 h-3.5" />
-                                              </button>
-
-                                              {/* Manage Access */}
-                                              <button
-                                                onClick={() => handleOpenManageAccess(note)}
-                                                className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200/50 dark:border-blue-800/40 transition-all cursor-pointer"
-                                                title="Manage Student Access / Permissions"
-                                              >
-                                                <ShieldCheck className="w-3.5 h-3.5" />
                                               </button>
 
                                               {/* Replace PDF */}
@@ -1194,9 +1260,9 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       )}
 
       {/* ==================================================== */}
-      {/* MANAGE STUDENT ACCESS MODAL                          */}
+      {/* MANAGE STUDENT ACCESS MODAL (CHAPTER LEVEL)          */}
       {/* ==================================================== */}
-      {manageAccessNote && (
+      {manageAccessChapter && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden my-8">
             <div className="px-6 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white flex items-center justify-between">
@@ -1205,7 +1271,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                 <h3 className="text-base font-bold">Manage Student Access</h3>
               </div>
               <button
-                onClick={() => setManageAccessNote(null)}
+                onClick={() => setManageAccessChapter(null)}
                 className="text-slate-300 hover:text-white p-1 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1215,131 +1281,141 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
             <div className="p-6 space-y-4">
               <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-100 dark:border-blue-900/50">
                 <span className="text-xs font-bold text-blue-900 dark:text-blue-200 block">
-                  {manageAccessNote.classGrade} – {manageAccessNote.subject}
+                  [{manageAccessChapter.classGrade}] – {manageAccessChapter.subject}
                 </span>
-                <span className="text-xs text-slate-600 dark:text-slate-300">
-                  Chapter {manageAccessNote.chapterNo}: {manageAccessNote.chapterName} {manageAccessNote.partLabel ? `(${manageAccessNote.partLabel})` : ""}
+                <span className="text-xs text-slate-600 dark:text-slate-300 font-semibold block mt-0.5">
+                  Chapter {manageAccessChapter.chapterNo}: {manageAccessChapter.chapterName} ({manageAccessChapter.parts.length} {manageAccessChapter.parts.length === 1 ? "PDF File" : "PDF Files"})
                 </span>
               </div>
 
               {accessMsg && (
                 <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 text-emerald-700 dark:text-emerald-300 text-xs font-bold rounded-xl flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4" />
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                   <span>{accessMsg}</span>
                 </div>
               )}
 
-              {/* Radio option: All vs Selected */}
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-black uppercase text-slate-500 tracking-wider">
-                  Permission Type
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setAccessType("all")}
-                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      accessType === "all"
-                        ? "bg-blue-50 border-blue-500 text-blue-900 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-500 ring-2 ring-blue-500/20"
-                        : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    <Globe className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <div>
-                      <span className="text-xs font-extrabold block">All Students</span>
-                      <span className="text-[10px] text-slate-400 block">Visible to every student in class</span>
-                    </div>
-                  </button>
+              {/* Class Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black uppercase text-slate-500 tracking-wider">
+                    Select Classes To Share Notes With
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllClasses}
+                      className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-slate-300">|</span>
+                    <button
+                      type="button"
+                      onClick={handleClearAllClasses}
+                      className="text-[10px] font-bold text-slate-500 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setAccessType("selected")}
-                    className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      accessType === "selected"
-                        ? "bg-blue-50 border-blue-500 text-blue-900 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-500 ring-2 ring-blue-500/20"
-                        : "bg-slate-50 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-                    }`}
-                  >
-                    <Users className="w-4 h-4 text-blue-500 shrink-0" />
-                    <div>
-                      <span className="text-xs font-extrabold block">Selected Students</span>
-                      <span className="text-[10px] text-slate-400 block">Grant access to specific students</span>
-                    </div>
-                  </button>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-52 overflow-y-auto p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                  {allAvailableClasses.map((cls) => {
+                    const normClass = normalizeClassGrade(cls);
+                    const isSelected = selectedClassesForAccess.includes(normClass);
+                    const countInClass = (students || []).filter(
+                      (s) => normalizeClassGrade(s.classGrade) === normClass
+                    ).length;
+
+                    return (
+                      <button
+                        key={cls}
+                        type="button"
+                        onClick={() => handleToggleClassForAccess(cls)}
+                        className={`p-2.5 rounded-xl border text-left flex items-center justify-between transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-blue-50 border-blue-500 text-blue-900 dark:bg-blue-950/60 dark:text-blue-200 dark:border-blue-500 ring-2 ring-blue-500/20"
+                            : "bg-white border-slate-200 text-slate-700 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                            isSelected ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800"
+                          }`}>
+                            {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                          </div>
+                          <span className="text-xs font-bold truncate">{cls}</span>
+                        </div>
+                        <span className="text-[10px] font-semibold text-slate-400 shrink-0 ml-1">
+                          {countInClass} std
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Student Checklist when selected */}
-              {accessType === "selected" && (
-                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-black uppercase text-slate-500 tracking-wider">
-                      Select Students ({manageAccessNote.classGrade})
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSelectAllStudentsInClass}
-                        className="text-[10px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                      >
-                        Select Class
-                      </button>
-                      <span className="text-slate-300">|</span>
-                      <button
-                        type="button"
-                        onClick={handleDeselectAllStudents}
-                        className="text-[10px] font-bold text-slate-500 hover:underline cursor-pointer"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="max-h-56 overflow-y-auto space-y-1.5 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
-                    {students.length > 0 ? (
-                      students
-                        .filter((s) => normalizeClassGrade(s.classGrade) === normalizeClassGrade(manageAccessNote.classGrade) || !manageAccessNote.classGrade)
-                        .map((student) => {
-                          const isChecked = allowedStudentIds.includes(student.id);
-                          return (
-                            <label
-                              key={student.id}
-                              className={`p-2.5 rounded-lg border flex items-center justify-between cursor-pointer transition-all ${
-                                isChecked
-                                  ? "bg-blue-50/80 border-blue-300 text-blue-900 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-200"
-                                  : "bg-white border-slate-200/80 text-slate-800 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <input
-                                  type="checkbox"
-                                  checked={isChecked}
-                                  onChange={() => handleToggleStudentAccess(student.id)}
-                                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500 cursor-pointer"
-                                />
-                                <div className="min-w-0">
-                                  <span className="text-xs font-bold block truncate">{student.name}</span>
-                                  <span className="text-[10px] text-slate-400 block">
-                                    Roll #{student.rollNo || "N/A"} • {student.classGrade}
-                                  </span>
-                                </div>
-                              </div>
-                            </label>
-                          );
-                        })
-                    ) : (
-                      <div className="p-4 text-center text-xs text-slate-400 font-semibold">
-                        No students found in system.
-                      </div>
-                    )}
-                  </div>
+              {/* Students Receiving Access Preview */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black uppercase text-slate-500 tracking-wider">
+                    Students With Access
+                  </label>
+                  <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                    {(students || []).filter((s) =>
+                      selectedClassesForAccess.includes(normalizeClassGrade(s.classGrade))
+                    ).length} Student(s) Total
+                  </span>
                 </div>
-              )}
 
+                <div className="max-h-40 overflow-y-auto space-y-1 p-2 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                  {students && students.length > 0 ? (
+                    (() => {
+                      const accessStudents = students.filter((s) =>
+                        selectedClassesForAccess.includes(normalizeClassGrade(s.classGrade))
+                      );
+
+                      if (accessStudents.length === 0) {
+                        return (
+                          <div className="p-3 text-center text-xs text-slate-400 font-semibold">
+                            No students in selected classes.
+                          </div>
+                        );
+                      }
+
+                      return accessStudents.map((s) => (
+                        <div
+                          key={s.id}
+                          className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-800 dark:text-slate-200 block truncate">
+                              {s.name}
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              {s.classGrade} {s.rollNo ? `• Roll #${s.rollNo}` : ""}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded">
+                            Granted
+                          </span>
+                        </div>
+                      ));
+                    })()
+                  ) : (
+                    <div className="p-3 text-center text-xs text-slate-400 font-semibold">
+                      No registered students found.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
               <div className="pt-4 flex items-center justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setManageAccessNote(null)}
+                  onClick={() => setManageAccessChapter(null)}
                   className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
                   disabled={isSavingAccess}
                 >

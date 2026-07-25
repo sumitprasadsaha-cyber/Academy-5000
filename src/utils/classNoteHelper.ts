@@ -38,11 +38,31 @@ export function filterClassNotesForStudent(
   if (!student) return [];
   const studentGrade = student.classGrade || "";
   const enrolledSubjects = (student.enrolledSubjects || []).map((s) => s.trim().toLowerCase());
+  const hasEnrolledList = Array.isArray(student.enrolledSubjects) && student.enrolledSubjects.length > 0;
 
   return classNotes.filter((note) => {
-    const gradeMatches = isClassGradeMatching(note.classGrade, studentGrade);
-    const subjectMatches = enrolledSubjects.includes((note.subject || "").trim().toLowerCase());
-    return gradeMatches && subjectMatches;
+    const studentNormGrade = normalizeClassGrade(studentGrade).toLowerCase();
+
+    // 1. Check class grade access
+    let classMatches = false;
+    const isExplicitlyShared = Array.isArray(note.allowedClasses) && note.allowedClasses.length > 0;
+
+    if (isExplicitlyShared) {
+      const allowedNorm = note.allowedClasses!.map((c) => normalizeClassGrade(c).toLowerCase());
+      classMatches = allowedNorm.includes(studentNormGrade);
+    } else if (note.accessType === "selected" && Array.isArray(note.allowedStudentIds) && note.allowedStudentIds.length > 0) {
+      classMatches = note.allowedStudentIds.includes(student.id);
+    } else {
+      classMatches = isClassGradeMatching(note.classGrade, studentGrade);
+    }
+
+    if (!classMatches) return false;
+
+    // 2. Check subject match (allow if in enrolled list, or no enrolled list, or note was explicitly shared)
+    const noteSubj = (note.subject || "").trim().toLowerCase();
+    const subjectMatches = !hasEnrolledList || enrolledSubjects.includes(noteSubj) || isExplicitlyShared;
+
+    return subjectMatches;
   });
 }
 
