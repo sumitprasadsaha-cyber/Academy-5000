@@ -45,6 +45,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   // Refs for interval loops & audio
   const timerIntervalRef = useRef<any>(null);
+  const timerEndTimeRef = useRef<number | null>(null);
   const stopwatchIntervalRef = useRef<any>(null);
   const alarmIntervalRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -146,40 +147,73 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   // --- TIMER EFFECT ---
   useEffect(() => {
     if (isTimerRunning) {
-      timerIntervalRef.current = setInterval(() => {
-        setTimerSecondsLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerIntervalRef.current);
-            setIsTimerRunning(false);
-            triggerAlarm();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      if (!timerEndTimeRef.current) {
+        timerEndTimeRef.current = Date.now() + timerSecondsLeft * 1000;
+      }
+
+      const updateTimer = () => {
+        if (!timerEndTimeRef.current) return;
+        const now = Date.now();
+        const diffMs = timerEndTimeRef.current - now;
+        const remaining = Math.max(0, Math.ceil(diffMs / 1000));
+
+        setTimerSecondsLeft(remaining);
+
+        if (remaining <= 0) {
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+          setIsTimerRunning(false);
+          timerEndTimeRef.current = null;
+          triggerAlarm();
+        }
+      };
+
+      updateTimer();
+      timerIntervalRef.current = setInterval(updateTimer, 500);
+
+      const handleSync = () => {
+        updateTimer();
+      };
+
+      window.addEventListener("focus", handleSync);
+      document.addEventListener("visibilitychange", handleSync);
+
+      return () => {
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        window.removeEventListener("focus", handleSync);
+        document.removeEventListener("visibilitychange", handleSync);
+      };
     } else {
+      timerEndTimeRef.current = null;
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     }
-
-    return () => {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    };
   }, [isTimerRunning]);
 
   // --- STOPWATCH EFFECT ---
   useEffect(() => {
     if (isStopwatchRunning) {
       const startTime = Date.now() - stopwatchMs;
-      stopwatchIntervalRef.current = setInterval(() => {
+      const updateStopwatch = () => {
         setStopwatchMs(Date.now() - startTime);
-      }, 30);
+      };
+
+      updateStopwatch();
+      stopwatchIntervalRef.current = setInterval(updateStopwatch, 30);
+
+      const handleSync = () => {
+        updateStopwatch();
+      };
+
+      window.addEventListener("focus", handleSync);
+      document.addEventListener("visibilitychange", handleSync);
+
+      return () => {
+        if (stopwatchIntervalRef.current) clearInterval(stopwatchIntervalRef.current);
+        window.removeEventListener("focus", handleSync);
+        document.removeEventListener("visibilitychange", handleSync);
+      };
     } else {
       if (stopwatchIntervalRef.current) clearInterval(stopwatchIntervalRef.current);
     }
-
-    return () => {
-      if (stopwatchIntervalRef.current) clearInterval(stopwatchIntervalRef.current);
-    };
   }, [isStopwatchRunning]);
 
   useEffect(() => {
@@ -190,18 +224,20 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   // --- TIMER CONTROLS ---
   const handleStartTimer = () => {
-    if (timerSecondsLeft <= 0) {
-      setTimerSecondsLeft(timerInitialSeconds);
-    }
+    const secs = timerSecondsLeft <= 0 ? timerInitialSeconds : timerSecondsLeft;
+    setTimerSecondsLeft(secs);
+    timerEndTimeRef.current = Date.now() + secs * 1000;
     stopAlarm();
     setIsTimerRunning(true);
   };
 
   const handlePauseTimer = () => {
+    timerEndTimeRef.current = null;
     setIsTimerRunning(false);
   };
 
   const handleResetTimer = () => {
+    timerEndTimeRef.current = null;
     setIsTimerRunning(false);
     stopAlarm();
     setTimerSecondsLeft(timerInitialSeconds);
@@ -209,6 +245,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const handleSetPreset = (minutes: number) => {
     const secs = minutes * 60;
+    timerEndTimeRef.current = null;
     setIsTimerRunning(false);
     stopAlarm();
     setTimerInitialSeconds(secs);
@@ -220,6 +257,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     const valid = Math.max(1, Math.min(300, mins));
     setCustomMinutes(valid);
     const secs = valid * 60;
+    timerEndTimeRef.current = null;
     setIsTimerRunning(false);
     stopAlarm();
     setTimerInitialSeconds(secs);

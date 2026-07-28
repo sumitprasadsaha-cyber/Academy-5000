@@ -208,8 +208,6 @@ export default function App() {
       if (document.visibilityState === "visible") {
         updateStudentPresence(studentId);
         lastPing = Date.now();
-      } else if (document.visibilityState === "hidden") {
-        markStudentOffline(studentId);
       }
     };
 

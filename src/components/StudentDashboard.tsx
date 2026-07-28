@@ -68,7 +68,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Student, ChapterNote } from "../types";
 import { ALL_ACADEMIC_MONTHS, MONTH_NAMES } from "../utils/monthHelper";
 import { groupAndSortChapterNotes } from "../utils/chapterNotesHelper";
-import { subscribeToAnnouncements, saveStudentDoc, subscribeToClassNotes, getLocalClassNotes } from "../lib/firestoreService";
+import { subscribeToAnnouncements, saveStudentDoc, subscribeToClassNotes, getLocalClassNotes, updateStudentPresence } from "../lib/firestoreService";
 import { uploadReportToStorage, downloadFileFromStorage, getBucketName, sanitizeStoragePath } from "../lib/storageService";
 import PdfViewer from "./PdfViewer";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
@@ -1667,6 +1667,9 @@ export function StudentMyTab({
       } catch (e) {
         // ignore
       }
+    }
+    if (localStudent?.id) {
+      updateStudentPresence(localStudent.id);
     }
     setActivePreviewPdf({
       url,
