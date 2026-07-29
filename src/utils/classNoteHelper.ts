@@ -58,9 +58,9 @@ export function filterClassNotesForStudent(
 
     if (!classMatches) return false;
 
-    // 2. Check subject match (allow if in enrolled list, or no enrolled list, or note was explicitly shared)
+    // 2. Check subject match: MUST be in student's enrolledSubjects list
     const noteSubj = (note.subject || "").trim().toLowerCase();
-    const subjectMatches = !hasEnrolledList || enrolledSubjects.includes(noteSubj) || isExplicitlyShared;
+    const subjectMatches = enrolledSubjects.includes(noteSubj);
 
     return subjectMatches;
   });

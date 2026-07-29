@@ -26,29 +26,90 @@ interface StudyTimerModalProps {
 
 type Mode = "timer" | "stopwatch";
 
+const STORAGE_KEY = "study_timer_persistent_state";
+
 export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange }: StudyTimerModalProps) {
   const [mode, setMode] = useState<Mode>("timer");
 
+  // Read saved state on mount if present
+  const getSavedState = () => {
+    if (typeof localStorage === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const saved = getSavedState();
+
   // --- TIMER STATE ---
-  const [timerInitialSeconds, setTimerInitialSeconds] = useState<number>(25 * 60); // Default 25 min (Pomodoro)
-  const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(25 * 60);
-  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
-  const [isAlarmRinging, setIsAlarmRinging] = useState<boolean>(false);
+  const [timerInitialSeconds, setTimerInitialSeconds] = useState<number>(
+    saved?.timerInitialSeconds || 25 * 60
+  );
+  
+  // Calculate remaining seconds if there was an active running timer
+  const initialLeft = () => {
+    if (saved?.isTimerRunning && saved?.targetEndTime) {
+      const rem = Math.max(0, Math.ceil((saved.targetEndTime - Date.now()) / 1000));
+      return rem;
+    }
+    if (saved?.timerSecondsLeft !== undefined) {
+      return saved.timerSecondsLeft;
+    }
+    return 25 * 60;
+  };
+
+  const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(initialLeft());
+  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(
+    saved?.isTimerRunning && saved?.targetEndTime ? (saved.targetEndTime > Date.now()) : false
+  );
+  const [isAlarmRinging, setIsAlarmRinging] = useState<boolean>(
+    saved?.isAlarmRinging || (saved?.isTimerRunning && saved?.targetEndTime && saved.targetEndTime <= Date.now()) || false
+  );
 
   // Custom setup inputs (in minutes)
-  const [customMinutes, setCustomMinutes] = useState<number>(25);
+  const [customMinutes, setCustomMinutes] = useState<number>(
+    saved?.timerInitialSeconds ? Math.round(saved.timerInitialSeconds / 60) : 25
+  );
 
   // --- STOPWATCH STATE ---
-  const [stopwatchMs, setStopwatchMs] = useState<number>(0);
-  const [isStopwatchRunning, setIsStopwatchRunning] = useState<boolean>(false);
-  const [laps, setLaps] = useState<number[]>([]);
+  const [stopwatchMs, setStopwatchMs] = useState<number>(saved?.stopwatchMs || 0);
+  const [isStopwatchRunning, setIsStopwatchRunning] = useState<boolean>(saved?.isStopwatchRunning || false);
+  const [laps, setLaps] = useState<number[]>(saved?.laps || []);
 
-  // Refs for interval loops & audio
+  // Refs for interval loops & audio & background worker
   const timerIntervalRef = useRef<any>(null);
-  const timerEndTimeRef = useRef<number | null>(null);
+  const timerEndTimeRef = useRef<number | null>(
+    saved?.targetEndTime || (saved?.isTimerRunning ? Date.now() + (saved?.timerSecondsLeft || 0) * 1000 : null)
+  );
+  const workerRef = useRef<Worker | null>(null);
   const stopwatchIntervalRef = useRef<any>(null);
   const alarmIntervalRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Save persistent state to localStorage
+  const saveStateToStorage = (overrides?: Record<string, any>) => {
+    if (typeof localStorage === "undefined") return;
+    try {
+      const stateToSave = {
+        mode,
+        timerInitialSeconds,
+        timerSecondsLeft,
+        isTimerRunning,
+        isAlarmRinging,
+        targetEndTime: timerEndTimeRef.current,
+        stopwatchMs,
+        isStopwatchRunning,
+        laps,
+        ...overrides
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
+    } catch (e) {
+      console.error("Failed saving timer state:", e);
+    }
+  };
 
   // Notify parent component if timer/stopwatch is currently active/running
   const isRunning = isTimerRunning || isStopwatchRunning;
@@ -58,6 +119,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const stopAlarm = () => {
     setIsAlarmRinging(false);
+    saveStateToStorage({ isAlarmRinging: false });
     if (alarmIntervalRef.current) {
       clearInterval(alarmIntervalRef.current);
       alarmIntervalRef.current = null;
@@ -74,19 +136,27 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     }
   };
 
-  // Sound chime producer
+  // Sound chime & Notification producer
   const triggerAlarm = () => {
     // Request notification permissions if supported
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
 
-    // Fire browser desktop notification if granted
+    // Fire browser desktop / system notification if granted
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
       try {
-        new Notification("Study Timer Finished!", {
-          body: "Your study session countdown has completed.",
+        const notif = new Notification("Study Timer Finished!", {
+          body: "Your study session countdown has completed. Tap to open.",
+          tag: "study-timer-alarm",
+          requireInteraction: true
         });
+        notif.onclick = () => {
+          try {
+            window.focus();
+            window.dispatchEvent(new CustomEvent("open-study-timer"));
+          } catch (e) {}
+        };
       } catch (e) {
         // ignore
       }
@@ -112,7 +182,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
           const gain = ctx.createGain();
           osc.type = "sine";
           osc.frequency.value = freq;
-          gain.gain.setValueAtTime(0.3, ctx.currentTime + delay);
+          gain.gain.setValueAtTime(0.4, ctx.currentTime + delay);
           gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + dur);
           osc.connect(gain);
           gain.connect(ctx.destination);
@@ -121,17 +191,17 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
         };
 
         const t = 0;
-        emitNote(t, 523.25, 0.2); // C5
-        emitNote(t + 0.2, 659.25, 0.2); // E5
-        emitNote(t + 0.4, 783.99, 0.25); // G5
-        emitNote(t + 0.7, 1046.5, 0.4); // C6
+        emitNote(t, 523.25, 0.25); // C5
+        emitNote(t + 0.2, 659.25, 0.25); // E5
+        emitNote(t + 0.4, 783.99, 0.3); // G5
+        emitNote(t + 0.7, 1046.5, 0.5); // C6
       } catch (e) {
         console.error("Audio error:", e);
       }
 
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         try {
-          navigator.vibrate([300, 150, 300, 150, 400]);
+          navigator.vibrate([400, 200, 400, 200, 600]);
         } catch (e) {
           // ignore
         }
@@ -140,15 +210,82 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
     stopAlarm();
     setIsAlarmRinging(true);
+    saveStateToStorage({ isAlarmRinging: true, isTimerRunning: false, timerSecondsLeft: 0, targetEndTime: null });
     playBeep();
     alarmIntervalRef.current = setInterval(playBeep, 2500);
   };
+
+  // --- BACKGROUND WEB WORKER INITIALIZATION ---
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.Worker) return;
+
+    try {
+      const workerBlob = new Blob([`
+        let intervalId = null;
+        self.onmessage = function(e) {
+          if (e.data.action === 'start') {
+            if (intervalId) clearInterval(intervalId);
+            const targetEndTime = e.data.targetEndTime;
+            intervalId = setInterval(function() {
+              const now = Date.now();
+              const remaining = Math.max(0, Math.ceil((targetEndTime - now) / 1000));
+              self.postMessage({ type: 'tick', remaining: remaining, isExpired: now >= targetEndTime });
+              if (now >= targetEndTime) {
+                clearInterval(intervalId);
+                intervalId = null;
+              }
+            }, 500);
+          } else if (e.data.action === 'stop') {
+            if (intervalId) clearInterval(intervalId);
+            intervalId = null;
+          }
+        };
+      `], { type: "application/javascript" });
+
+      const blobUrl = URL.createObjectURL(workerBlob);
+      const worker = new Worker(blobUrl);
+
+      worker.onmessage = (e) => {
+        if (e.data.type === "tick") {
+          setTimerSecondsLeft(e.data.remaining);
+          if (e.data.isExpired) {
+            setIsTimerRunning(false);
+            timerEndTimeRef.current = null;
+            triggerAlarm();
+          }
+        }
+      };
+
+      workerRef.current = worker;
+
+      return () => {
+        worker.terminate();
+        URL.revokeObjectURL(blobUrl);
+      };
+    } catch (e) {
+      console.warn("Could not initialize inline Web Worker:", e);
+    }
+  }, []);
 
   // --- TIMER EFFECT ---
   useEffect(() => {
     if (isTimerRunning) {
       if (!timerEndTimeRef.current) {
         timerEndTimeRef.current = Date.now() + timerSecondsLeft * 1000;
+      }
+
+      saveStateToStorage({
+        isTimerRunning: true,
+        targetEndTime: timerEndTimeRef.current,
+        timerSecondsLeft
+      });
+
+      // Start Web Worker countdown
+      if (workerRef.current) {
+        workerRef.current.postMessage({
+          action: "start",
+          targetEndTime: timerEndTimeRef.current
+        });
       }
 
       const updateTimer = () => {
@@ -170,30 +307,60 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
       updateTimer();
       timerIntervalRef.current = setInterval(updateTimer, 500);
 
+      // Lifecycle sync when app comes to foreground or resumes from PDF viewer / background
       const handleSync = () => {
-        updateTimer();
+        if (!timerEndTimeRef.current) return;
+        const now = Date.now();
+        const remaining = Math.max(0, Math.ceil((timerEndTimeRef.current - now) / 1000));
+        setTimerSecondsLeft(remaining);
+
+        if (now >= timerEndTimeRef.current) {
+          if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+          setIsTimerRunning(false);
+          timerEndTimeRef.current = null;
+          triggerAlarm();
+        }
       };
 
       window.addEventListener("focus", handleSync);
       document.addEventListener("visibilitychange", handleSync);
+      window.addEventListener("pageshow", handleSync);
 
       return () => {
         if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        if (workerRef.current) {
+          workerRef.current.postMessage({ action: "stop" });
+        }
         window.removeEventListener("focus", handleSync);
         document.removeEventListener("visibilitychange", handleSync);
+        window.removeEventListener("pageshow", handleSync);
       };
     } else {
-      timerEndTimeRef.current = null;
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (workerRef.current) {
+        workerRef.current.postMessage({ action: "stop" });
+      }
     }
   }, [isTimerRunning]);
+
+  // Initial Check on Mount in case timer expired while process was killed/restored
+  useEffect(() => {
+    if (timerEndTimeRef.current && timerEndTimeRef.current <= Date.now()) {
+      setTimerSecondsLeft(0);
+      setIsTimerRunning(false);
+      timerEndTimeRef.current = null;
+      triggerAlarm();
+    }
+  }, []);
 
   // --- STOPWATCH EFFECT ---
   useEffect(() => {
     if (isStopwatchRunning) {
       const startTime = Date.now() - stopwatchMs;
       const updateStopwatch = () => {
-        setStopwatchMs(Date.now() - startTime);
+        const ms = Date.now() - startTime;
+        setStopwatchMs(ms);
+        saveStateToStorage({ stopwatchMs: ms, isStopwatchRunning: true });
       };
 
       updateStopwatch();
@@ -213,6 +380,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
       };
     } else {
       if (stopwatchIntervalRef.current) clearInterval(stopwatchIntervalRef.current);
+      saveStateToStorage({ isStopwatchRunning: false, stopwatchMs });
     }
   }, [isStopwatchRunning]);
 
@@ -224,16 +392,32 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   // --- TIMER CONTROLS ---
   const handleStartTimer = () => {
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+
     const secs = timerSecondsLeft <= 0 ? timerInitialSeconds : timerSecondsLeft;
     setTimerSecondsLeft(secs);
-    timerEndTimeRef.current = Date.now() + secs * 1000;
+    const targetEnd = Date.now() + secs * 1000;
+    timerEndTimeRef.current = targetEnd;
     stopAlarm();
     setIsTimerRunning(true);
+    saveStateToStorage({
+      isTimerRunning: true,
+      targetEndTime: targetEnd,
+      timerSecondsLeft: secs,
+      isAlarmRinging: false
+    });
   };
 
   const handlePauseTimer = () => {
     timerEndTimeRef.current = null;
     setIsTimerRunning(false);
+    saveStateToStorage({
+      isTimerRunning: false,
+      targetEndTime: null,
+      timerSecondsLeft
+    });
   };
 
   const handleResetTimer = () => {
@@ -241,6 +425,12 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     setIsTimerRunning(false);
     stopAlarm();
     setTimerSecondsLeft(timerInitialSeconds);
+    saveStateToStorage({
+      isTimerRunning: false,
+      targetEndTime: null,
+      timerSecondsLeft: timerInitialSeconds,
+      isAlarmRinging: false
+    });
   };
 
   const handleSetPreset = (minutes: number) => {
@@ -251,6 +441,13 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     setTimerInitialSeconds(secs);
     setTimerSecondsLeft(secs);
     setCustomMinutes(minutes);
+    saveStateToStorage({
+      isTimerRunning: false,
+      targetEndTime: null,
+      timerInitialSeconds: secs,
+      timerSecondsLeft: secs,
+      isAlarmRinging: false
+    });
   };
 
   const handleApplyCustomMinutes = (mins: number) => {
@@ -262,25 +459,37 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     stopAlarm();
     setTimerInitialSeconds(secs);
     setTimerSecondsLeft(secs);
+    saveStateToStorage({
+      isTimerRunning: false,
+      targetEndTime: null,
+      timerInitialSeconds: secs,
+      timerSecondsLeft: secs,
+      isAlarmRinging: false
+    });
   };
 
   // --- STOPWATCH CONTROLS ---
   const handleStartStopwatch = () => {
     setIsStopwatchRunning(true);
+    saveStateToStorage({ isStopwatchRunning: true });
   };
 
   const handlePauseStopwatch = () => {
     setIsStopwatchRunning(false);
+    saveStateToStorage({ isStopwatchRunning: false });
   };
 
   const handleResetStopwatch = () => {
     setIsStopwatchRunning(false);
     setStopwatchMs(0);
     setLaps([]);
+    saveStateToStorage({ isStopwatchRunning: false, stopwatchMs: 0, laps: [] });
   };
 
   const handleAddLap = () => {
-    setLaps((prev) => [stopwatchMs, ...prev]);
+    const updatedLaps = [stopwatchMs, ...laps];
+    setLaps(updatedLaps);
+    saveStateToStorage({ laps: updatedLaps });
   };
 
   // Format helper for Timer
@@ -330,7 +539,8 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   const swProgress = swSeconds / 60;
   const swStrokeDashoffset = circumference * (1 - swProgress);
 
-  if (!isOpen) return null;
+  // Render modal UI if user has opened modal OR if alarm is currently ringing
+  if (!isOpen && !isAlarmRinging) return null;
 
   return (
     <AnimatePresence>
@@ -613,3 +823,4 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     </AnimatePresence>
   );
 }
+

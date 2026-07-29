@@ -441,6 +441,14 @@ export default function App() {
   const [isTimerOpen, setIsTimerOpen] = useState(false);
   const [isTimerActive, setIsTimerActive] = useState(false);
 
+  useEffect(() => {
+    const handleOpenTimer = () => {
+      setIsTimerOpen(true);
+    };
+    window.addEventListener("open-study-timer", handleOpenTimer);
+    return () => window.removeEventListener("open-study-timer", handleOpenTimer);
+  }, []);
+
   // Find notes for the current active subject
   const currentSubjectNotes = React.useMemo(() => {
     if (!activeStudent || !activeSubject) return [];
