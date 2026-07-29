@@ -415,7 +415,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       let updatedFileName = editingNote.pdfFileName;
 
       if (cleanPartLabel) {
-        const currentFileName = editingNote.pdfFileName || editingNote.fileName || "";
+        const currentFileName = editingNote.pdfFileName || (editingNote as any).fileName || "";
         let ext = currentFileName.includes(".")
           ? currentFileName.split(".").pop()
           : (editingNote.fileType === "image" ? "jpg" : "pdf");
