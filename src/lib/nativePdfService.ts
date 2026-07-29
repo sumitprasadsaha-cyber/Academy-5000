@@ -12,6 +12,9 @@ export interface OpenPdfOptions {
   storagePath?: string;
   bucket?: string;
   noteId?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileType?: "pdf" | "image" | string;
   onProgress?: (percent: number, statusText: string) => void;
 }
 
@@ -23,9 +26,43 @@ export interface OpenPdfResult {
 }
 
 /**
- * Generates a deterministic, filesystem-safe filename for caching a PDF in Directory.Cache.
+ * Determines whether a given note or file is an image based on fileType, mimeType, or filename extension.
  */
-export function getPdfCacheFileName(rawPathOrUrl: string, noteId?: string): string {
+export function isImageFile(fileName?: string, url?: string, mimeType?: string, fileType?: string): boolean {
+  if (fileType === "image") return true;
+  if (mimeType && mimeType.toLowerCase().startsWith("image/")) return true;
+  const str = (fileName || url || "").toLowerCase();
+  return /\.(png|jpg|jpeg|webp|gif|bmp|svg)(\?.*)?$/i.test(str);
+}
+
+function getFileExtension(rawPathOrUrl: string, isImg: boolean): string {
+  const clean = rawPathOrUrl.split("?")[0].split("#")[0];
+  const match = clean.match(/\.([a-zA-Z0-9]+)$/);
+  if (match) {
+    const ext = match[1].toLowerCase();
+    if (["pdf", "png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"].includes(ext)) {
+      return ext;
+    }
+  }
+  return isImg ? "jpg" : "pdf";
+}
+
+function getMimeType(fileNameOrUrl: string, mimeType?: string, isImg?: boolean): string {
+  if (mimeType && mimeType.trim()) return mimeType;
+  const ext = getFileExtension(fileNameOrUrl, !!isImg);
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  return isImg ? "image/jpeg" : "application/pdf";
+}
+
+/**
+ * Generates a deterministic, filesystem-safe filename for caching a PDF or Image in Directory.Cache.
+ */
+export function getPdfCacheFileName(rawPathOrUrl: string, noteId?: string, isImg?: boolean, ext?: string): string {
   const identifier = noteId || rawPathOrUrl || "document";
   const cleanSlug = identifier
     .replace(/[^a-zA-Z0-9_-]/g, "_")
@@ -39,6 +76,10 @@ export function getPdfCacheFileName(rawPathOrUrl: string, noteId?: string): stri
   }
   const safeHash = Math.abs(hash).toString(36);
 
+  if (isImg) {
+    const extension = ext ? ext.replace(/^\./, "") : "jpg";
+    return `img_cache_${cleanSlug}_${safeHash}.${extension}`;
+  }
   return `pdf_cache_${cleanSlug}_${safeHash}.pdf`;
 }
 
@@ -48,7 +89,7 @@ export function getPdfCacheFileName(rawPathOrUrl: string, noteId?: string): stri
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read downloaded PDF file bytes."));
+    reader.onerror = () => reject(new Error("Failed to read downloaded file bytes."));
     reader.onload = () => {
       const dataUrl = reader.result as string;
       const base64 = dataUrl.substring(dataUrl.indexOf(",") + 1);
@@ -73,25 +114,29 @@ async function validatePdfHeader(blob: Blob): Promise<boolean> {
 }
 
 /**
- * Downloads a PDF from Supabase storage, caches it in the app's native Cache Directory,
- * verifies its size, MIME type, and structure, and opens it using Android's native PDF viewer Intent.
+ * Downloads a PDF or Image from Supabase storage, caches it in the app's native Cache Directory,
+ * verifies its size and MIME type, and opens it using Android's native PDF viewer or Photo Viewer Intent.
  */
 export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<OpenPdfResult> {
-  const { url, storagePath, bucket, noteId, onProgress } = options;
+  const { url, storagePath, bucket, noteId, fileName, mimeType, fileType, onProgress } = options;
 
   const updateProgress = (percent: number, text: string) => {
     if (onProgress) onProgress(percent, text);
   };
 
-  updateProgress(5, "Resolving PDF location...");
+  const isImg = isImageFile(fileName, url || storagePath, mimeType, fileType);
+  const ext = getFileExtension(fileName || storagePath || url || "", isImg);
+  const contentType = getMimeType(fileName || url || "", mimeType, isImg);
+
+  updateProgress(5, isImg ? "Resolving photo location..." : "Resolving PDF location...");
 
   if (!url && !storagePath) {
-    throw new Error("Missing PDF file location or URL.");
+    throw new Error(isImg ? "Missing photo file location or URL." : "Missing PDF file location or URL.");
   }
 
   const activeBucket = getBucketName(bucket);
   const activePath = sanitizeStoragePath(storagePath || url, activeBucket);
-  const cacheFileName = getPdfCacheFileName(activePath || url, noteId);
+  const cacheFileName = getPdfCacheFileName(activePath || url, noteId, isImg, ext);
 
   const isNative = Capacitor.isNativePlatform();
 
@@ -106,23 +151,23 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
 
       if (statResult && statResult.size > 0) {
         console.log(`[NativePdfService] Found existing cached file "${cacheFileName}" (${statResult.size} bytes).`);
-        updateProgress(80, "Verifying cached PDF file...");
+        updateProgress(80, isImg ? "Verifying cached photo file..." : "Verifying cached PDF file...");
 
         const uriResult = await Filesystem.getUri({
           path: cacheFileName,
           directory: Directory.Cache
         });
 
-        updateProgress(95, "Opening in Android PDF viewer...");
+        updateProgress(95, isImg ? "Opening in Android Photo viewer..." : "Opening in Android PDF viewer...");
 
         try {
           await FileOpener.open({
             filePath: uriResult.uri,
-            contentType: "application/pdf",
+            contentType: contentType,
             openWithDefault: false
           });
 
-          updateProgress(100, "PDF opened successfully");
+          updateProgress(100, isImg ? "Photo opened successfully" : "PDF opened successfully");
           return { success: true, cachedPath: uriResult.uri, isNative: true };
         } catch (openerErr: any) {
           const errStr = String(openerErr?.message || openerErr).toLowerCase();
@@ -135,7 +180,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
             errStr.includes("no handler") ||
             errStr.includes("cannot open")
           ) {
-            throw new Error("No PDF reader installed on this device.");
+            throw new Error(isImg ? "No photo viewer app installed on this device." : "No PDF reader installed on this device.");
           }
 
           console.log("[NativePdfService] Removing invalid or unreadable cached file...");
@@ -151,7 +196,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
     }
   }
 
-  // Step 2: Download PDF from Supabase Storage
+  // Step 2: Download file from Supabase Storage
   updateProgress(20, "Retrieving secure download URL...");
   let downloadUrl = "";
   try {
@@ -165,7 +210,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
   // 2a. Direct Supabase Storage SDK download
   if (activePath && !url.startsWith("data:") && !url.startsWith("blob:")) {
     try {
-      updateProgress(35, "Downloading PDF from Supabase Storage...");
+      updateProgress(35, isImg ? "Downloading photo from Supabase Storage..." : "Downloading PDF from Supabase Storage...");
       const { data: sdkData, error: sdkErr } = await supabase.storage.from(activeBucket).download(activePath);
 
       if (!sdkErr && sdkData && sdkData.size > 0) {
@@ -187,10 +232,10 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
   // 2b. Fetch via HTTPS downloadUrl if blob not retrieved yet
   if (!pdfBlob) {
     if (!downloadUrl) {
-      throw new Error("Unable to resolve PDF storage URL or signed link.");
+      throw new Error(isImg ? "Unable to resolve photo storage URL or signed link." : "Unable to resolve PDF storage URL or signed link.");
     }
 
-    updateProgress(50, "Downloading PDF file...");
+    updateProgress(50, isImg ? "Downloading photo file..." : "Downloading PDF file...");
 
     if (downloadUrl.startsWith("data:") || downloadUrl.startsWith("JVBERi")) {
       pdfBlob = await dataUrlToBlob(downloadUrl);
@@ -198,7 +243,7 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
       const response = await fetch(downloadUrl);
       if (!response.ok) {
         if (response.status === 404) {
-          throw new Error("PDF file not found in storage (HTTP 404).");
+          throw new Error(isImg ? "Photo file not found in storage (HTTP 404)." : "PDF file not found in storage (HTTP 404).");
         } else if (response.status === 401 || response.status === 403) {
           throw new Error("Access denied or expired download link (HTTP " + response.status + ").");
         }
@@ -209,20 +254,22 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
   }
 
   // Step 3: Verification
-  updateProgress(75, "Verifying PDF file integrity...");
+  updateProgress(75, isImg ? "Verifying photo file integrity..." : "Verifying PDF file integrity...");
 
   if (!pdfBlob || pdfBlob.size <= 0) {
-    throw new Error("Downloaded PDF is empty (0 bytes) or missing.");
+    throw new Error(isImg ? "Downloaded photo is empty (0 bytes) or missing." : "Downloaded PDF is empty (0 bytes) or missing.");
   }
 
-  const isValidHeader = await validatePdfHeader(pdfBlob);
-  if (!isValidHeader) {
-    throw new Error("Invalid PDF file: corrupted content or invalid header.");
+  if (!isImg) {
+    const isValidHeader = await validatePdfHeader(pdfBlob);
+    if (!isValidHeader) {
+      throw new Error("Invalid PDF file: corrupted content or invalid header.");
+    }
   }
 
   // Step 4: Write to Cache Directory if on Native Android
   if (isNative) {
-    updateProgress(85, "Saving PDF to app cache directory...");
+    updateProgress(85, isImg ? "Saving photo to app cache directory..." : "Saving PDF to app cache directory...");
     const base64Data = await blobToBase64(pdfBlob);
 
     await Filesystem.writeFile({
@@ -246,16 +293,16 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
       directory: Directory.Cache
     });
 
-    updateProgress(95, "Opening in Android PDF viewer...");
+    updateProgress(95, isImg ? "Opening in Android Photo viewer..." : "Opening in Android PDF viewer...");
 
     try {
       await FileOpener.open({
         filePath: uriResult.uri,
-        contentType: "application/pdf",
+        contentType: contentType,
         openWithDefault: false
       });
 
-      updateProgress(100, "PDF opened successfully");
+      updateProgress(100, isImg ? "Photo opened successfully" : "PDF opened successfully");
       return { success: true, cachedPath: uriResult.uri, isNative: true };
     } catch (openErr: any) {
       const errStr = String(openErr?.message || openErr).toLowerCase();
@@ -268,17 +315,17 @@ export async function openPdfWithNativeViewer(options: OpenPdfOptions): Promise<
         errStr.includes("no handler") ||
         errStr.includes("cannot open")
       ) {
-        throw new Error("No PDF reader installed on this device.");
+        throw new Error(isImg ? "No photo viewer app installed on this device." : "No PDF reader installed on this device.");
       }
 
-      throw new Error(`Failed to open PDF in Android viewer: ${openErr.message || openErr}`);
+      throw new Error(`Failed to open in Android viewer: ${openErr.message || openErr}`);
     }
   } else {
     // Web / Browser Preview Fallback
-    updateProgress(95, "Opening PDF in web browser...");
+    updateProgress(95, isImg ? "Opening photo in browser..." : "Opening PDF in web browser...");
     const blobObjectUrl = URL.createObjectURL(pdfBlob);
     window.open(blobObjectUrl || downloadUrl, "_blank");
-    updateProgress(100, "PDF opened in browser");
+    updateProgress(100, isImg ? "Photo opened in browser" : "PDF opened in browser");
     return { success: true, isNative: false };
   }
 }

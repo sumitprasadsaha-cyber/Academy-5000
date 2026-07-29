@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { FileText, AlertTriangle, RefreshCw, X, CheckCircle2, Smartphone } from "lucide-react";
-import { openPdfWithNativeViewer } from "../lib/nativePdfService";
+import { FileText, Image as ImageIcon, AlertTriangle, RefreshCw, X, CheckCircle2 } from "lucide-react";
+import { openPdfWithNativeViewer, isImageFile } from "../lib/nativePdfService";
 
 interface PdfViewerProps {
   url: string;
@@ -9,6 +9,9 @@ interface PdfViewerProps {
   noteId?: string;
   storagePath?: string;
   bucket?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileType?: "pdf" | "image" | string;
 }
 
 export default function PdfViewer({
@@ -17,14 +20,19 @@ export default function PdfViewer({
   onClose,
   noteId,
   storagePath,
-  bucket
+  bucket,
+  fileName,
+  mimeType,
+  fileType
 }: PdfViewerProps) {
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(10);
-  const [statusText, setStatusText] = useState("Preparing PDF document...");
+  const [statusText, setStatusText] = useState("Preparing document...");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [retryTrigger, setRetryTrigger] = useState(0);
+
+  const isImg = isImageFile(fileName, url, mimeType, fileType);
 
   const handleOpenPdf = useCallback(async () => {
     try {
@@ -32,7 +40,7 @@ export default function PdfViewer({
       setError(null);
       setSuccess(false);
       setProgress(10);
-      setStatusText("Initializing PDF download...");
+      setStatusText(isImg ? "Initializing photo download..." : "Initializing PDF download...");
 
       await openPdfWithNativeViewer({
         url,
@@ -40,6 +48,9 @@ export default function PdfViewer({
         storagePath,
         bucket,
         noteId,
+        fileName,
+        mimeType,
+        fileType,
         onProgress: (percent, status) => {
           setProgress(percent);
           setStatusText(status);
@@ -54,11 +65,11 @@ export default function PdfViewer({
         onClose();
       }, 1200);
     } catch (err: any) {
-      console.error("[PdfViewer Modal] Error opening PDF:", err);
-      setError(err.message || "Unable to open PDF document.");
+      console.error("[PdfViewer Modal] Error opening document:", err);
+      setError(err.message || (isImg ? "Unable to open photo." : "Unable to open PDF document."));
       setLoading(false);
     }
-  }, [url, title, storagePath, bucket, noteId, onClose]);
+  }, [url, title, storagePath, bucket, noteId, fileName, mimeType, fileType, isImg, onClose]);
 
   useEffect(() => {
     handleOpenPdf();
@@ -78,14 +89,16 @@ export default function PdfViewer({
 
         {/* Icon Badge */}
         <div className="p-3.5 bg-blue-600/10 border border-blue-500/20 text-blue-400 rounded-2xl mb-4">
-          <FileText className="w-8 h-8" />
+          {isImg ? <ImageIcon className="w-8 h-8" /> : <FileText className="w-8 h-8" />}
         </div>
 
         {/* Document Title */}
         <h3 className="text-base font-bold text-slate-100 truncate max-w-full px-2 mb-1">
           {title}
         </h3>
-        <p className="text-xs text-slate-400 mb-5">Opening in Android Native Viewer</p>
+        <p className="text-xs text-slate-400 mb-5">
+          {isImg ? "Opening in Android Native Photo Viewer" : "Opening in Android Native Viewer"}
+        </p>
 
         {/* Loading / Progress State */}
         {loading && (
@@ -107,7 +120,7 @@ export default function PdfViewer({
           <div className="flex flex-col items-center gap-2 text-emerald-400 animate-fadeIn">
             <CheckCircle2 className="w-7 h-7" />
             <span className="text-xs font-bold text-slate-200">
-              PDF Opened in Native Reader
+              {isImg ? "Photo Opened in Native Viewer" : "PDF Opened in Native Reader"}
             </span>
           </div>
         )}

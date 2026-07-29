@@ -9,6 +9,8 @@ export interface ClassNote {
   pdfFileName: string;
   storagePath?: string;
   bucket?: string;
+  fileType?: "pdf" | "image";
+  mimeType?: string;
   createdAt: string;
   updatedAt?: string;
   uploadedBy?: string;
@@ -42,6 +44,7 @@ export interface ChapterNote {
   fileName?: string;
   fileSize?: number;
   mimeType?: string;
+  fileType?: "pdf" | "image";
   uploadedAt?: string;
   uploadedBy?: string;
   downloadUrl?: string;

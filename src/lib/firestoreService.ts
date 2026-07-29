@@ -921,7 +921,8 @@ export async function deleteClassNoteDoc(noteId: string): Promise<void> {
     if (anyStudentUpdated) {
       saveLocalStudents(updatedStudentsList);
       for (const st of updatedStudentsList) {
-        if (st.notes && Object.keys(st.notes).length !== (students.find(s => s.id === st.id)?.notes ? Object.keys(students.find(s => s.id === st.id)!.notes).length : 0)) {
+        const orig = students.find((s) => s.id === st.id);
+        if (orig && JSON.stringify(orig.notes) !== JSON.stringify(st.notes)) {
           await saveStudentDoc(st);
         }
       }
@@ -935,6 +936,45 @@ export async function deleteClassNoteDoc(noteId: string): Promise<void> {
   try {
     const docRef = doc(db, "class_notes", noteId);
     await deleteDoc(docRef);
+
+    // Clean up student.notes across all student records in Firestore
+    try {
+      const studentsColRef = collection(db, "students");
+      const snap = await getDocs(studentsColRef);
+      snap.forEach(async (docSnap) => {
+        const st = docSnap.data() as Student;
+        if (!st || !st.notes) return;
+        let studentUpdated = false;
+        const updatedNotes: Record<string, any[]> = {};
+
+        for (const [subject, notesArr] of Object.entries(st.notes)) {
+          if (!Array.isArray(notesArr)) {
+            updatedNotes[subject] = notesArr as any;
+            continue;
+          }
+          const filtered = notesArr.filter((n: any) => {
+            if (n.id === noteId) return false;
+            if (targetNote?.storagePath && n.storagePath === targetNote.storagePath) return false;
+            if (targetNote?.pdfUrl && n.pdfUrl === targetNote.pdfUrl) return false;
+            return true;
+          });
+
+          if (filtered.length !== notesArr.length) {
+            studentUpdated = true;
+          }
+          if (filtered.length > 0) {
+            updatedNotes[subject] = filtered;
+          }
+        }
+
+        if (studentUpdated) {
+          const cleanedStudent = { ...st, notes: updatedNotes };
+          await setDoc(doc(db, "students", st.id), cleanObjectForFirestore(cleanedStudent), { merge: true });
+        }
+      });
+    } catch (fsErr) {
+      console.warn("Failed cleansing Firestore student.notes on delete:", fsErr);
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `class_notes/${noteId}`);
   }

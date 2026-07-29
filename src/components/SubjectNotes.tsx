@@ -3,6 +3,7 @@ import {
   ArrowLeft, 
   Plus, 
   FileText, 
+  Image as ImageIcon,
   Trash2, 
   BookOpen, 
   Upload,
@@ -20,6 +21,7 @@ import {
 import { ChapterNote, Student } from "../types";
 import { uploadPdfToStorage, downloadFileFromStorage, sanitizeStoragePath, getBucketName } from "../lib/storageService";
 import PdfViewer from "./PdfViewer";
+import { isImageFile } from "../lib/nativePdfService";
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SelectStudentsModal from "./SelectStudentsModal";
 import { groupAndSortChapterNotes } from "../utils/chapterNotesHelper";
@@ -99,13 +101,16 @@ export default function SubjectNotes({
   const [isEditingSaving, setIsEditingSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
-  // PDF Preview state
+  // PDF / Image Preview state
   const [activePreviewPdf, setActivePreviewPdf] = useState<{
     url: string;
     title: string;
     noteId?: string;
     storagePath?: string;
     bucket?: string;
+    fileName?: string;
+    mimeType?: string;
+    fileType?: "pdf" | "image" | string;
   } | null>(null);
 
   // Delete Confirmation Modal state
@@ -182,15 +187,20 @@ export default function SubjectNotes({
       title: `Chapter ${note.chapterNo} - ${note.chapterName}`,
       noteId: note.id,
       storagePath: storagePath || url,
-      bucket: bucket
+      bucket: bucket,
+      fileName: note.pdfFileName || note.fileName,
+      mimeType: note.mimeType,
+      fileType: note.fileType
     });
   };
 
   const handlePdfUploadChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.type !== "application/pdf") {
-        setError("Only PDF document files are supported.");
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      const isImg = file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(file.name);
+      if (!isPdf && !isImg) {
+        setError("Please select a valid PDF document or Image file.");
         return;
       }
       if (file.size > 50 * 1024 * 1024) {
@@ -224,10 +234,22 @@ export default function SubjectNotes({
       setUploadProgress(0);
       setError("");
 
+      const cleanPart = chapterName.trim();
+      const isPdf = pdfFile.type === "application/pdf" || pdfFile.name.toLowerCase().endsWith(".pdf");
+      const isImg = pdfFile.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(pdfFile.name);
+      let ext = pdfFile.name.includes(".") ? pdfFile.name.split(".").pop() : (isImg ? "jpg" : "pdf");
+      if (!ext) ext = isImg ? "jpg" : "pdf";
+
+      let targetFileName = pdfName || pdfFile.name;
+      if (cleanPart) {
+        const hasExtension = cleanPart.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
+        targetFileName = hasExtension ? cleanPart : `${cleanPart}.${ext}`;
+      }
+
       const uploadedUrl = await uploadPdfToStorage(
         studentId || "sandbox",
         subject,
-        pdfName,
+        targetFileName,
         pdfFile,
         (progress) => setUploadProgress(progress)
       );
@@ -238,7 +260,7 @@ export default function SubjectNotes({
         Number(chapterNo),
         chapterName.trim(),
         uploadedUrl,
-        pdfName,
+        targetFileName,
         uploadAccessType,
         finalAllowedIds
       );
@@ -503,7 +525,11 @@ export default function SubjectNotes({
                           >
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0" />
-                              <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                              {isImageFile(note.pdfFileName || note.fileName, note.pdfUrl, note.mimeType, note.fileType) ? (
+                                <ImageIcon className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                              ) : (
+                                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                              )}
                               <div className="flex flex-col min-w-0">
                                 <span className="text-xs font-bold text-slate-800 dark:text-slate-100 break-words group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                   {note.partLabel}
@@ -813,7 +839,7 @@ export default function SubjectNotes({
         onCancel={() => setDeleteModalNoteId(null)}
       />
 
-      {/* --- PDF VIEWER MODAL --- */}
+      {/* --- PDF / IMAGE VIEWER MODAL --- */}
       {activePreviewPdf && (
         <PdfViewer
           url={activePreviewPdf.url}
@@ -821,6 +847,9 @@ export default function SubjectNotes({
           noteId={activePreviewPdf.noteId}
           storagePath={activePreviewPdf.storagePath}
           bucket={activePreviewPdf.bucket}
+          fileName={activePreviewPdf.fileName}
+          mimeType={activePreviewPdf.mimeType}
+          fileType={activePreviewPdf.fileType}
           onClose={() => setActivePreviewPdf(null)}
         />
       )}

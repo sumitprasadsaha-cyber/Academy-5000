@@ -11,6 +11,7 @@ import {
   ChevronDown, 
   ChevronRight, 
   FileText, 
+  Image as ImageIcon,
   X, 
   AlertTriangle, 
   CheckCircle2,
@@ -25,6 +26,7 @@ import { uploadFileToSupabase, deleteFileFromStorage, downloadFileFromStorage } 
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
 import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching } from "../utils/classNoteHelper";
 import PdfViewer from "./PdfViewer";
+import { isImageFile } from "../lib/nativePdfService";
 
 interface AdminNotesViewProps {
   notes: ClassNote[];
@@ -105,12 +107,15 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [isSavingAccess, setIsSavingAccess] = useState(false);
   const [accessMsg, setAccessMsg] = useState("");
 
-  // PDF Preview modal
+  // PDF / Image Preview modal
   const [previewPdf, setPreviewPdf] = useState<{
     url: string;
     title: string;
     storagePath?: string;
     bucket?: string;
+    fileName?: string;
+    mimeType?: string;
+    fileType?: "pdf" | "image" | string;
   } | null>(null);
 
   // Accordion open/close state
@@ -301,7 +306,15 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       return;
     }
     if (!pdfFile) {
-      setFormError("Please choose a PDF file to upload.");
+      setFormError("Please choose a PDF or Image file to upload.");
+      return;
+    }
+
+    const isPdf = pdfFile.type === "application/pdf" || pdfFile.name.toLowerCase().endsWith(".pdf");
+    const isImg = pdfFile.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(pdfFile.name);
+
+    if (!isPdf && !isImg) {
+      setFormError("Please select a valid PDF document or Image file.");
       return;
     }
 
@@ -309,17 +322,33 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setUploadProgress(15);
 
     try {
-      const uploadPath = `class_notes/${normalizeClassGrade(finalClass).replace(/\s+/g, "_")}/${finalSubject.replace(/\s+/g, "_")}/${Date.now()}_${pdfFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const cleanPartLabel = partLabel.trim();
+      let fileExtension = pdfFile.name.includes(".")
+        ? pdfFile.name.split(".").pop()
+        : (isImg ? "jpg" : "pdf");
+      if (!fileExtension) fileExtension = isImg ? "jpg" : "pdf";
+
+      // Rename uploaded document or image to part as filled during its upload
+      let renamedFileName = pdfFile.name;
+      if (cleanPartLabel) {
+        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
+        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
+      }
+
+      const uploadPath = `class_notes/${normalizeClassGrade(finalClass).replace(/\s+/g, "_")}/${finalSubject.replace(/\s+/g, "_")}/${Date.now()}_${renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const uploadRes = await uploadFileToSupabase(
         "academy-connect-files",
         uploadPath,
         pdfFile,
-        pdfFile.name,
+        renamedFileName,
         "Admin",
         (percent) => setUploadProgress(15 + Math.round(percent * 0.75))
       );
 
       setUploadProgress(95);
+
+      const mime = pdfFile.type || (isImg ? "image/jpeg" : "application/pdf");
+      const fType: "pdf" | "image" = isImg ? "image" : "pdf";
 
       const newNote: ClassNote = {
         id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -327,11 +356,13 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         subject: finalSubject,
         chapterNo: Number(chapterNo),
         chapterName: chapterTitle.trim(),
-        partLabel: partLabel.trim() ? partLabel.trim() : undefined,
+        partLabel: cleanPartLabel ? cleanPartLabel : undefined,
         pdfUrl: uploadRes.downloadUrl,
-        pdfFileName: pdfFile.name,
+        pdfFileName: renamedFileName,
         storagePath: uploadRes.storagePath,
         bucket: uploadRes.bucket,
+        fileType: fType,
+        mimeType: mime,
         createdAt: new Date().toISOString(),
         uploadedBy: "Admin",
       };
@@ -380,13 +411,28 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
     setIsEditSaving(true);
     try {
+      const cleanPartLabel = editPartLabel.trim();
+      let updatedFileName = editingNote.pdfFileName;
+
+      if (cleanPartLabel) {
+        const currentFileName = editingNote.pdfFileName || editingNote.fileName || "";
+        let ext = currentFileName.includes(".")
+          ? currentFileName.split(".").pop()
+          : (editingNote.fileType === "image" ? "jpg" : "pdf");
+        if (!ext) ext = editingNote.fileType === "image" ? "jpg" : "pdf";
+
+        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
+        updatedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${ext}`;
+      }
+
       const updatedNote: ClassNote = {
         ...editingNote,
         classGrade: normalizeClassGrade(editClass.trim()),
         subject: editSubject.trim(),
         chapterNo: Number(editChapterNo),
         chapterName: editChapterTitle.trim(),
-        partLabel: editPartLabel.trim() ? editPartLabel.trim() : undefined,
+        partLabel: cleanPartLabel ? cleanPartLabel : undefined,
+        pdfFileName: updatedFileName,
       };
 
       await saveClassNoteDoc(updatedNote);
@@ -399,37 +445,62 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     }
   };
 
-  // Save Replace PDF
+  // Save Replace PDF / Image
   const handleSaveReplacePdf = async () => {
     if (!replaceNote || !replaceFile) return;
 
+    const isPdf = replaceFile.type === "application/pdf" || replaceFile.name.toLowerCase().endsWith(".pdf");
+    const isImg = replaceFile.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(replaceFile.name);
+
+    if (!isPdf && !isImg) {
+      alert("Please select a valid PDF document or Image file.");
+      return;
+    }
+
     setIsReplacing(true);
     try {
-      // 1. Delete old PDF from storage if path exists
+      // 1. Delete old file from storage if path exists
       if (replaceNote.storagePath) {
         try {
           await deleteFileFromStorage(replaceNote.storagePath, replaceNote.bucket);
         } catch (e) {
-          console.warn("Failed deleting old PDF during replace:", e);
+          console.warn("Failed deleting old file during replace:", e);
         }
       }
 
-      // 2. Upload new PDF
-      const uploadPath = `class_notes/${normalizeClassGrade(replaceNote.classGrade).replace(/\s+/g, "_")}/${replaceNote.subject.replace(/\s+/g, "_")}/${Date.now()}_${replaceFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      // 2. Upload new file
+      const cleanPartLabel = (replaceNote.partLabel || "").trim();
+      let fileExtension = replaceFile.name.includes(".")
+        ? replaceFile.name.split(".").pop()
+        : (isImg ? "jpg" : "pdf");
+      if (!fileExtension) fileExtension = isImg ? "jpg" : "pdf";
+
+      let renamedFileName = replaceFile.name;
+      if (cleanPartLabel) {
+        const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
+        renamedFileName = hasExtension ? cleanPartLabel : `${cleanPartLabel}.${fileExtension}`;
+      }
+
+      const uploadPath = `class_notes/${normalizeClassGrade(replaceNote.classGrade).replace(/\s+/g, "_")}/${replaceNote.subject.replace(/\s+/g, "_")}/${Date.now()}_${renamedFileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const uploadRes = await uploadFileToSupabase(
         "academy-connect-files",
         uploadPath,
         replaceFile,
-        replaceFile.name,
+        renamedFileName,
         "Admin"
       );
+
+      const mime = replaceFile.type || (isImg ? "image/jpeg" : "application/pdf");
+      const fType: "pdf" | "image" = isImg ? "image" : "pdf";
 
       const updatedNote: ClassNote = {
         ...replaceNote,
         pdfUrl: uploadRes.downloadUrl,
-        pdfFileName: replaceFile.name,
+        pdfFileName: renamedFileName,
         storagePath: uploadRes.storagePath,
         bucket: uploadRes.bucket,
+        fileType: fType,
+        mimeType: mime,
         createdAt: new Date().toISOString(),
       };
 
@@ -999,20 +1070,22 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                 />
               </div>
 
-              {/* PDF File */}
+              {/* PDF or Image File */}
               <div>
                 <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  PDF File <span className="text-rose-500">*</span>
+                  PDF or Image File <span className="text-rose-500">*</span>
                 </label>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="application/pdf"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) {
-                      if (file.type !== "application/pdf") {
-                        setFormError("Please select a valid PDF document.");
+                      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+                      const isImg = file.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(file.name);
+                      if (!isPdf && !isImg) {
+                        setFormError("Please select a valid PDF document or Image file.");
                         setPdfFile(null);
                         return;
                       }
@@ -1220,15 +1293,22 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Select New PDF File
+                  Select New PDF or Image File
                 </label>
                 <input
                   ref={replaceFileInputRef}
                   type="file"
-                  accept="application/pdf"
+                  accept="application/pdf,image/*"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f && f.type === "application/pdf") {
+                    if (f) {
+                      const isPdf = f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+                      const isImg = f.type.startsWith("image/") || /\.(png|jpg|jpeg|webp|gif|bmp|svg)$/i.test(f.name);
+                      if (!isPdf && !isImg) {
+                        alert("Please select a valid PDF document or Image file.");
+                        setReplaceFile(null);
+                        return;
+                      }
                       setReplaceFile(f);
                     }
                   }}
@@ -1490,7 +1570,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
       )}
 
       {/* ==================================================== */}
-      {/* PDF VIEWER MODAL                                     */}
+      {/* PDF / IMAGE VIEWER MODAL                             */}
       {/* ==================================================== */}
       {previewPdf && (
         <PdfViewer
@@ -1499,6 +1579,9 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
           onClose={() => setPreviewPdf(null)}
           storagePath={previewPdf.storagePath}
           bucket={previewPdf.bucket}
+          fileName={previewPdf.fileName}
+          mimeType={previewPdf.mimeType}
+          fileType={previewPdf.fileType}
         />
       )}
     </div>
