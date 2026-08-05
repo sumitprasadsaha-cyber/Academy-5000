@@ -84,9 +84,11 @@ import {
   calculateStudentOutstandingAmount
 } from "../utils/feeBillingHelper";
 import { ChapterProgressData, ClassNote } from "../types";
-import { Sparkles } from "lucide-react";
+import { FileCheck } from "lucide-react";
 import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAccessHelper";
 import { filterClassNotesForStudent } from "../utils/classNoteHelper";
+import StudentPracticeTestModal from "./StudentPracticeTestModal";
+import { getTopicPracticeTest } from "../utils/assessmentParser";
 
 interface StudentDashboardProps {
   student: Student;
@@ -1503,6 +1505,16 @@ export function StudentMyTab({
   const [deleteNoteTarget, setDeleteNoteTarget] = useState<{ subject: string; noteId: string } | null>(null);
   const [isDeletingNote, setIsDeletingNote] = useState(false);
 
+  // Practice test modal state
+  const [studentTestTarget, setStudentTestTarget] = useState<{
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    topicName: string;
+    testType: "topic" | "full_chapter";
+  } | null>(null);
+
   const handleSaveChapterProgress = async (status: string, remarks: string) => {
     if (!progressModalNote || !selectedSubject) return;
     const subjClean = selectedSubject.trim();
@@ -1915,13 +1927,22 @@ export function StudentMyTab({
 
                     if (chapterNotes.length === 1) {
                       const note = chapterNotes[0];
+                      const topicName = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
+                      const topicTest = getTopicPracticeTest(
+                        localStudent.classGrade || note.classGrade || "Class 10",
+                        selectedSubject || note.subject || "",
+                        group.chapterNo,
+                        topicName
+                      );
+                      const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
+
                       return (
                         <div 
                           key={`chapter-single-${group.chapterNo}-${note.id}`} 
                           className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 hover:border-blue-300 dark:hover:border-blue-800 transition-all flex flex-col gap-3 group shadow-xs"
                         >
                           {/* Row 1: Book Icon & Chapter Title */}
-                          <div className="flex items-center gap-3 min-w-0 w-full">
+                          <div className="flex items-center gap-3 min-w-0 w-full cursor-pointer" onClick={() => handlePreviewPdf(note)}>
                             <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl shrink-0 border border-blue-100/60 dark:border-blue-900/30 group-hover:bg-blue-600 group-hover:text-white transition-colors">
                               <BookOpen className="w-4 h-4" />
                             </div>
@@ -1937,7 +1958,7 @@ export function StudentMyTab({
                             </div>
                           </div>
 
-                          {/* Row 2: Status Badge (left), View Icon (right), Progress Icon (far right) */}
+                          {/* Row 2: Status Badge (left), Test Icon Button (right) */}
                           <div className="flex items-center justify-between gap-2.5 w-full pt-0.5">
                             <div className="flex items-center gap-2 shrink-0 min-w-0">
                               <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md flex items-center gap-1 whitespace-nowrap shrink-0 ${
@@ -1953,23 +1974,26 @@ export function StudentMyTab({
                             </div>
 
                             <div className="flex items-center gap-2 shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={() => handlePreviewPdf(note)}
-                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 dark:hover:text-blue-400 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                title="View PDF"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setProgressModalNote(note)}
-                                className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all cursor-pointer active:scale-95 shrink-0"
-                                title="Chapter Progress"
-                              >
-                                <TrendingUp className="w-3.5 h-3.5" />
-                              </button>
+                              {hasTest && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setStudentTestTarget({
+                                      classGrade: localStudent.classGrade || note.classGrade || "Class 10",
+                                      subject: selectedSubject || note.subject || "",
+                                      chapterNo: group.chapterNo,
+                                      chapterName: group.chapterName,
+                                      topicName,
+                                      testType: "topic"
+                                    });
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-all cursor-pointer shadow-2xs active:scale-95 shrink-0 flex items-center gap-1.5 font-extrabold text-xs"
+                                  title="Take Practice Test"
+                                >
+                                  <FileCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                  <span>Test</span>
+                                </button>
+                              )}
                             </div>
                           </div>
 
@@ -2016,7 +2040,7 @@ export function StudentMyTab({
                             </h4>
                           </div>
 
-                          {/* Row 2: Status Badge (left), Parts Badge (center, only if applicable), View Icon (right), Progress Icon (far right) */}
+                          {/* Row 2: Status Badge (left), Topics Badge */}
                           <div className="flex items-center justify-between gap-2.5 w-full pt-0.5">
                             <div className="flex items-center gap-2 shrink-0 min-w-0">
                               <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md flex items-center gap-1 whitespace-nowrap shrink-0 ${
@@ -2034,33 +2058,22 @@ export function StudentMyTab({
                                 {group.notes.length} {group.notes.length === 1 ? "Topic" : "Topics"}
                               </span>
                             </div>
-
-                            <div className="flex items-center gap-2 shrink-0 ml-auto" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={() => handlePreviewPdf(group.notes[0])}
-                                className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 dark:hover:text-blue-400 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                title="View PDF"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => setProgressModalNote(group.notes[0])}
-                                className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-all cursor-pointer active:scale-95 shrink-0"
-                                title="Chapter Progress"
-                              >
-                                <TrendingUp className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
                           </div>
                         </div>
 
-                        {/* Expanded Parts List (Organizational content only, no progress icons) */}
+                        {/* Expanded Parts List */}
                         {isExpanded && (
                           <div className="p-3 pt-0 flex flex-col gap-2 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/30 dark:bg-slate-950/20 animate-fadeIn">
                             {group.notes.map((note) => {
+                              const topicName = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
+                              const topicTest = getTopicPracticeTest(
+                                localStudent.classGrade || note.classGrade || "Class 10",
+                                selectedSubject || note.subject || "",
+                                group.chapterNo,
+                                topicName
+                              );
+                              const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
+
                               return (
                                 <div
                                   key={note.id}
@@ -2085,19 +2098,42 @@ export function StudentMyTab({
                                     </div>
                                   </div>
 
-                                  {isAdmin && onDeleteNote && selectedSubject && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteNoteTarget({ subject: selectedSubject, noteId: note.id });
-                                      }}
-                                      className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-800/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-                                      title="Delete Note"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
+                                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    {hasTest && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setStudentTestTarget({
+                                            classGrade: localStudent.classGrade || note.classGrade || "Class 10",
+                                            subject: selectedSubject || note.subject || "",
+                                            chapterNo: group.chapterNo,
+                                            chapterName: group.chapterName,
+                                            topicName,
+                                            testType: "topic"
+                                          });
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 transition-all cursor-pointer shadow-2xs active:scale-95 shrink-0 flex items-center gap-1 font-extrabold text-xs"
+                                        title="Take Practice Test"
+                                      >
+                                        <FileCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                        <span>Test</span>
+                                      </button>
+                                    )}
+
+                                    {isAdmin && onDeleteNote && selectedSubject && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDeleteNoteTarget({ subject: selectedSubject, noteId: note.id });
+                                        }}
+                                        className="p-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200/60 dark:border-rose-800/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                                        title="Delete Note"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
@@ -2138,6 +2174,22 @@ export function StudentMyTab({
           initialProgress={getChapterProgressRecord(progressModalNote.id, selectedSubject, localStudent.chapterProgress)}
           onClose={() => setProgressModalNote(null)}
           onSave={(status, remarks) => handleSaveChapterProgress(status, remarks)}
+        />
+      )}
+
+      {/* Student Practice Test Modal */}
+      {studentTestTarget && (
+        <StudentPracticeTestModal
+          isOpen={true}
+          onClose={() => setStudentTestTarget(null)}
+          studentId={localStudent.id}
+          studentName={localStudent.name}
+          classGrade={studentTestTarget.classGrade}
+          subject={studentTestTarget.subject}
+          chapterNo={studentTestTarget.chapterNo}
+          chapterName={studentTestTarget.chapterName}
+          topicName={studentTestTarget.topicName}
+          testType={studentTestTarget.testType}
         />
       )}
 

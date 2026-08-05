@@ -16,7 +16,11 @@ import {
   ShieldCheck,
   Users,
   Globe,
-  Lock
+  Lock,
+  Sparkles,
+  Trophy,
+  CheckCircle2,
+  FileCheck
 } from "lucide-react";
 import { ChapterNote, Student } from "../types";
 import { uploadPdfToStorage, downloadFileFromStorage, sanitizeStoragePath, getBucketName } from "../lib/storageService";
@@ -26,6 +30,9 @@ import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import SelectStudentsModal from "./SelectStudentsModal";
 import { groupAndSortChapterNotes, getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import { isNoteAccessibleToStudent, filterNotesForStudent } from "../utils/noteAccessHelper";
+import StudentPracticeTestModal from "./StudentPracticeTestModal";
+import AdminPracticeTestModal from "./AdminPracticeTestModal";
+import { getFullChapterQuestions, getTopicPracticeTest } from "../utils/assessmentParser";
 
 interface SubjectNotesProps {
   subject: string;
@@ -93,6 +100,24 @@ export default function SubjectNotes({
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Assessment Test Modal States
+  const [studentTestTarget, setStudentTestTarget] = useState<{
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    topicName: string;
+    testType: "topic" | "full_chapter";
+  } | null>(null);
+
+  const [adminTestTarget, setAdminTestTarget] = useState<{
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    topicName: string;
+  } | null>(null);
 
   // Edit Chapter Modal state
   const [editingNote, setEditingNote] = useState<ChapterNote | null>(null);
@@ -461,15 +486,58 @@ export default function SubjectNotes({
 
                       {/* Action buttons */}
                       <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center" onClick={(e) => e.stopPropagation()}>
-                        {/* View Action */}
-                        <button
-                          type="button"
-                          onClick={() => handlePreviewPdf(note)}
-                          className="p-2 bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:bg-slate-800 dark:hover:bg-blue-950/40 dark:text-slate-300 dark:hover:text-blue-400 rounded-xl transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
-                          title="View PDF"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
+                        {/* Practice Test Button */}
+                        {(() => {
+                          const topicLabel = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
+                          const noteClass = note.classGrade || "Class 10";
+                          const topicTest = getTopicPracticeTest(noteClass, subject, group.chapterNo, topicLabel);
+                          const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
+
+                          if (!isAdmin && !hasTest) return null;
+
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isAdmin) {
+                                  setAdminTestTarget({
+                                    classGrade: noteClass,
+                                    subject,
+                                    chapterNo: group.chapterNo,
+                                    chapterName: group.chapterName,
+                                    topicName: topicLabel
+                                  });
+                                } else {
+                                  setStudentTestTarget({
+                                    classGrade: noteClass,
+                                    subject,
+                                    chapterNo: group.chapterNo,
+                                    chapterName: group.chapterName,
+                                    topicName: topicLabel,
+                                    testType: "topic"
+                                  });
+                                }
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200/60 dark:border-emerald-800/40 transition-all cursor-pointer text-xs font-bold flex items-center gap-1 shadow-2xs"
+                              title="Practice Test for this Topic"
+                            >
+                              <FileCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <span>Practice Test</span>
+                            </button>
+                          );
+                        })()}
+
+                        {/* View Action (Admin Only) */}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handlePreviewPdf(note)}
+                            className="p-2 bg-slate-50 hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:bg-slate-800 dark:hover:bg-blue-950/40 dark:text-slate-300 dark:hover:text-blue-400 rounded-xl transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
+                            title="View PDF"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        )}
                         {isAdmin && (
                           <>
                             <button
@@ -541,6 +609,28 @@ export default function SubjectNotes({
                         </h3>
                       </div>
                       <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        {/* Full Chapter Test Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const firstNote = group.notes[0];
+                            const noteClass = firstNote?.classGrade || "Class 10";
+                            setStudentTestTarget({
+                              classGrade: noteClass,
+                              subject,
+                              chapterNo: group.chapterNo,
+                              chapterName: group.chapterName,
+                              topicName: "Full Chapter Test",
+                              testType: "full_chapter"
+                            });
+                          }}
+                          className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 text-amber-700 dark:text-amber-300 rounded-lg transition-all border border-amber-200/80 dark:border-amber-800/40 cursor-pointer text-xs font-bold flex items-center gap-1 shadow-2xs"
+                          title="Take Full Chapter Practice Test"
+                        >
+                          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                          <span className="hidden sm:inline">Full Chapter Test</span>
+                        </button>
+
                         {isAdmin && (
                           <>
                             <button
@@ -619,14 +709,57 @@ export default function SubjectNotes({
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={() => handlePreviewPdf(note)}
-                                className="p-1.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
-                                title="View PDF"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                              </button>
+                              {/* Practice Test Button */}
+                              {(() => {
+                                const topicLabel = getFormattedTopicLabel(note) || `Topic ${group.chapterNo}`;
+                                const noteClass = note.classGrade || "Class 10";
+                                const topicTest = getTopicPracticeTest(noteClass, subject, group.chapterNo, topicLabel);
+                                const hasTest = !!(topicTest && topicTest.questions && topicTest.questions.length > 0);
+
+                                if (!isAdmin && !hasTest) return null;
+
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (isAdmin) {
+                                        setAdminTestTarget({
+                                          classGrade: noteClass,
+                                          subject,
+                                          chapterNo: group.chapterNo,
+                                          chapterName: group.chapterName,
+                                          topicName: topicLabel
+                                        });
+                                      } else {
+                                        setStudentTestTarget({
+                                          classGrade: noteClass,
+                                          subject,
+                                          chapterNo: group.chapterNo,
+                                          chapterName: group.chapterName,
+                                          topicName: topicLabel,
+                                          testType: "topic"
+                                        });
+                                      }
+                                    }}
+                                    className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200/60 dark:border-emerald-800/40 transition-all cursor-pointer text-xs font-bold flex items-center gap-1 shadow-2xs"
+                                    title="Practice Test for this Topic"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                    <span>Practice Test</span>
+                                  </button>
+                                );
+                              })()}
+
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => handlePreviewPdf(note)}
+                                  className="p-1.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 rounded-lg transition-all border border-slate-200 dark:border-slate-700 cursor-pointer"
+                                  title="View PDF"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               {isAdmin && (
                                 <>
                                   <button
@@ -956,6 +1089,35 @@ export default function SubjectNotes({
         }}
         onCancel={() => setDeleteGroupModalNotes(null)}
       />
+
+      {/* --- STUDENT PRACTICE TEST MODAL --- */}
+      {studentTestTarget && (
+        <StudentPracticeTestModal
+          isOpen={!!studentTestTarget}
+          onClose={() => setStudentTestTarget(null)}
+          studentId={studentId || "student_local"}
+          studentName={studentName || "Student"}
+          classGrade={studentTestTarget.classGrade}
+          subject={studentTestTarget.subject}
+          chapterNo={studentTestTarget.chapterNo}
+          chapterName={studentTestTarget.chapterName}
+          topicName={studentTestTarget.topicName}
+          testType={studentTestTarget.testType}
+        />
+      )}
+
+      {/* --- ADMIN PRACTICE TEST MODAL --- */}
+      {adminTestTarget && (
+        <AdminPracticeTestModal
+          isOpen={!!adminTestTarget}
+          onClose={() => setAdminTestTarget(null)}
+          classGrade={adminTestTarget.classGrade}
+          subject={adminTestTarget.subject}
+          chapterNo={adminTestTarget.chapterNo}
+          chapterName={adminTestTarget.chapterName}
+          topicName={adminTestTarget.topicName}
+        />
+      )}
 
       {/* --- PDF / IMAGE VIEWER MODAL --- */}
       {activePreviewPdf && (

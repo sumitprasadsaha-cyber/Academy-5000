@@ -28,6 +28,8 @@ import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, is
 import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import PdfViewer from "./PdfViewer";
 import { isImageFile } from "../lib/nativePdfService";
+import AdminPracticeTestModal from "./AdminPracticeTestModal";
+import { getFullChapterQuestions } from "../utils/assessmentParser";
 
 interface AdminNotesViewProps {
   notes: ClassNote[];
@@ -121,6 +123,15 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     fileName?: string;
     mimeType?: string;
     fileType?: "pdf" | "image" | string;
+  } | null>(null);
+
+  // Practice Test Editor state
+  const [practiceTestTarget, setPracticeTestTarget] = useState<{
+    classGrade: string;
+    subject: string;
+    chapterNo: number;
+    chapterName: string;
+    topicName: string;
   } | null>(null);
 
   // Accordion open/close state
@@ -906,6 +917,23 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
                                             {/* Compact Icon-only Action Buttons */}
                                             <div className="flex items-center gap-1.5 shrink-0 pt-1.5 sm:pt-0 border-t sm:border-t-0 border-slate-200/50 dark:border-slate-700/50 justify-end">
+                                              {/* Practice Test Button */}
+                                              <button
+                                                type="button"
+                                                onClick={() => setPracticeTestTarget({
+                                                  classGrade: note.classGrade || clsGroup.classGrade,
+                                                  subject: note.subject || subjGroup.subject,
+                                                  chapterNo: note.chapterNo || chGroup.chapterNo,
+                                                  chapterName: note.chapterName || chGroup.chapterName,
+                                                  topicName: getFormattedTopicLabel(note) || note.topicName || note.partLabel || "Topic 1"
+                                                })}
+                                                className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200/60 dark:border-emerald-800/40 transition-all cursor-pointer text-xs font-bold flex items-center gap-1 shadow-2xs"
+                                                title="Manage Practice Test for this Topic"
+                                              >
+                                                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                                <span>Practice Test</span>
+                                              </button>
+
                                               {/* View PDF */}
                                               <button
                                                 onClick={() => setPreviewPdf({
@@ -1639,6 +1667,21 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
             </div>
           </div>
         </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* PRACTICE TEST MODAL                                  */}
+      {/* ==================================================== */}
+      {practiceTestTarget && (
+        <AdminPracticeTestModal
+          isOpen={!!practiceTestTarget}
+          onClose={() => setPracticeTestTarget(null)}
+          classGrade={practiceTestTarget.classGrade}
+          subject={practiceTestTarget.subject}
+          chapterNo={practiceTestTarget.chapterNo}
+          chapterName={practiceTestTarget.chapterName}
+          topicName={practiceTestTarget.topicName}
+        />
       )}
 
       {/* ==================================================== */}

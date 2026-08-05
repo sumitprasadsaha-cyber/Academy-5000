@@ -25,6 +25,8 @@ export interface ClassNote {
 
 export interface ChapterNote {
   id: string;
+  classGrade?: string;
+  subject?: string;
   chapterNo: number; // Only number!
   chapterName: string; // Chapter name
   partLabel?: string; // Optional part label or legacy part label
@@ -168,4 +170,58 @@ export interface TuitionStats {
   monthlyTarget: number;
   monthlyCollected: number;
   subjectProgress: Record<string, number>; // subject -> progress %
+}
+
+// ----------------------------------------------------
+// SMART TOPIC-WISE ASSESSMENT SYSTEM TYPES
+// ----------------------------------------------------
+
+export interface ParsedAssessmentQuestion {
+  id: string;
+  classGrade: string;
+  subject: string;
+  chapterNo: number;
+  chapterName: string;
+  topicName: string;
+  type: "mcq" | "true_false";
+  question: string;
+  options: string[]; // Clean option text for student view (e.g. ["A. Plants and animals", "B. Internal and external forces"])
+  correctAnswer: string; // "A" | "B" | "C" | "D" or "True" | "False"
+  rawText?: string;
+}
+
+export interface TopicPracticeTest {
+  id: string; // Unique test key: `${classGrade}_${subject}_ch${chapterNo}_${topicName}`
+  classGrade: string;
+  subject: string;
+  chapterNo: number;
+  chapterName: string;
+  topicName: string;
+  rawText: string;
+  questions: ParsedAssessmentQuestion[];
+  createdAt: string;
+  updatedAt: string;
+  uploadedBy?: string;
+}
+
+export interface TestAttemptRecord {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classGrade: string;
+  subject: string;
+  chapterNo: number;
+  chapterName: string;
+  topicName: string; // Topic Name OR "Full Chapter Test"
+  testType: "topic" | "full_chapter";
+  attemptNumber: number; // 1, 2, 3...
+  date: string; // Formatted date string
+  timestamp: number;
+  timeTakenSeconds: number; // In seconds
+  score: number; // e.g., 18
+  totalQuestions: number; // e.g., 20
+  percentage: number; // e.g., 90
+  correctAnswersCount: number;
+  wrongAnswersCount: number;
+  userAnswers: Record<string, string>; // questionId -> chosen answer
 }
