@@ -29,7 +29,7 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // System prompt instructing the AI Assistant
-const SYSTEM_INSTRUCTION = `You are Academy Connect's AI Assistant, an expert educational administrator and data analyst for a tuition center / coaching academy.
+const SYSTEM_INSTRUCTION = `You are Sumit Tuition App's AI Assistant, an expert educational administrator and data analyst for a tuition center / coaching academy.
 Your task is to analyze student, class, attendance, fee, test, homework, and syllabus structured JSON data and generate clear, professional, actionable, and encouraging reports in clean Markdown format.
 
 RULES:
@@ -95,7 +95,7 @@ app.post("/api/ai/chat", async (req, res) => {
 
     const ai = getGeminiClient();
 
-    let fullPrompt = `Context Data on Academy Connect Institution & Students:\n\`\`\`json\n${JSON.stringify(dataContext || {}, null, 2)}\n\`\`\`\n\n`;
+    let fullPrompt = `Context Data on Sumit Tuition App Institution & Students:\n\`\`\`json\n${JSON.stringify(dataContext || {}, null, 2)}\n\`\`\`\n\n`;
 
     if (history && Array.isArray(history) && history.length > 0) {
       fullPrompt += `Previous Conversation History:\n`;

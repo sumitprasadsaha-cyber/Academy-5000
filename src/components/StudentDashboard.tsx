@@ -67,7 +67,7 @@ import { jsPDF } from "jspdf";
 import { AnimatePresence, motion } from "motion/react";
 import { Student, ChapterNote } from "../types";
 import { ALL_ACADEMIC_MONTHS, MONTH_NAMES } from "../utils/monthHelper";
-import { groupAndSortChapterNotes } from "../utils/chapterNotesHelper";
+import { groupAndSortChapterNotes, getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import { subscribeToAnnouncements, saveStudentDoc, subscribeToClassNotes, getLocalClassNotes, updateStudentPresence } from "../lib/firestoreService";
 import { uploadReportToStorage, downloadFileFromStorage, getBucketName, sanitizeStoragePath } from "../lib/storageService";
 import PdfViewer from "./PdfViewer";
@@ -77,6 +77,12 @@ import { dataUrlToBlob } from "../utils/pdfUtils";
 import { supabase } from "../lib/supabaseClient";
 import ChapterProgressBottomSheet from "./ChapterProgressBottomSheet";
 import { getChapterProgressRecord, getStatusConfig, calculateSubjectProgress, normalizeStatusLabel } from "../utils/chapterProgressHelper";
+import {
+  getEvaluatedFeeStatus,
+  getEvaluatedStudentLedger,
+  getPendingFeeMonths,
+  calculateStudentOutstandingAmount
+} from "../utils/feeBillingHelper";
 import { ChapterProgressData, ClassNote } from "../types";
 import { Sparkles } from "lucide-react";
 import { filterNotesForStudent, filterSubjectsForStudent } from "../utils/noteAccessHelper";
@@ -287,7 +293,7 @@ export async function generateSubjectPdfReport(student: Student, subject: string
   doc.setFont("helvetica", "italic");
   doc.setTextColor(148, 163, 184);
   doc.text("This report is generated dynamically by the Personal Study Space portal.", 14, 280);
-  doc.text("© 2026 Tuition Ledger Academy", 150, 280);
+  doc.text("© 2026 Sumit Tuition App", 150, 280);
 
   // Save PDF report with robust fallback
   const fileName = `${(student?.name || "Student").replace(/\s+/g, "_")}_${subject.replace(/\s+/g, "_")}_Report.pdf`;
@@ -1920,7 +1926,7 @@ export function StudentMyTab({
                               <BookOpen className="w-4 h-4" />
                             </div>
                             <div className="min-w-0 flex-1">
-                              <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                              <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 break-words group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                 Chapter {group.chapterNo} – {group.chapterName}
                               </h4>
                               {note.pdfFileName && (
@@ -1993,7 +1999,7 @@ export function StudentMyTab({
                           <div 
                             className="flex items-center gap-3 min-w-0 w-full cursor-pointer"
                             onClick={() => toggleStudentChapterExpand(group.chapterNo)}
-                            title="Click to expand/collapse chapter parts"
+                            title="Click to expand/collapse chapter topics"
                           >
                             <div className="p-1.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-lg group-hover/hdr:bg-blue-50 group-hover/hdr:text-blue-600 dark:group-hover/hdr:bg-blue-950/50 dark:group-hover/hdr:text-blue-400 transition-colors shrink-0">
                               {isExpanded ? (
@@ -2005,7 +2011,7 @@ export function StudentMyTab({
                             <div className="p-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 rounded-xl shrink-0">
                               <BookOpen className="w-4 h-4" />
                             </div>
-                            <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 truncate flex-1 min-w-0 group-hover/hdr:text-blue-600 dark:group-hover/hdr:text-blue-400 transition-colors">
+                            <h4 className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 break-words flex-1 min-w-0 group-hover/hdr:text-blue-600 dark:group-hover/hdr:text-blue-400 transition-colors">
                               Chapter {group.chapterNo} – {group.chapterName}
                             </h4>
                           </div>
@@ -2025,7 +2031,7 @@ export function StudentMyTab({
                               </span>
 
                               <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md whitespace-nowrap shrink-0">
-                                {group.notes.length} Parts
+                                {group.notes.length} {group.notes.length === 1 ? "Topic" : "Topics"}
                               </span>
                             </div>
 
@@ -2064,14 +2070,18 @@ export function StudentMyTab({
                                   <div className="flex items-center gap-2.5 min-w-0">
                                     <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
                                     <div className="flex flex-col min-w-0">
-                                      <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                        {note.partLabel || `Part ${note.pdfFileName || ""}`}
+                                      <span className="text-xs font-bold text-slate-800 dark:text-slate-100 break-words group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                        {getFormattedTopicLabel(note)}
                                       </span>
-                                      {note.pdfFileName && (
+                                      {!isFileNameRedundant(getFormattedTopicLabel(note), note.pdfFileName) && note.pdfFileName ? (
                                         <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
                                           {note.pdfFileName} {note.createdAt ? `• Added ${formatDate(note.createdAt)}` : ""}
                                         </span>
-                                      )}
+                                      ) : note.createdAt ? (
+                                        <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
+                                          Added {formatDate(note.createdAt)}
+                                        </span>
+                                      ) : null}
                                     </div>
                                   </div>
 
@@ -2265,12 +2275,12 @@ export default function StudentDashboard({
 
   const feeHistory = useMemo(() => {
     return studentMonthsSinceJoining.map((m) => {
-      const status = student.feeMonths?.[m] || "unpaid";
+      const status = getEvaluatedFeeStatus(student, m).toLowerCase();
       const payDate = student.feePaymentDates?.[m];
       const paymentMode = (student as Student & { feePaymentModes?: Record<string, string> }).feePaymentModes?.[m];
       return { month: m, status, payDate, paymentMode };
     });
-  }, [student.feeMonths, student.feePaymentDates, studentMonthsSinceJoining]);
+  }, [student, studentMonthsSinceJoining]);
 
   const attendanceStats = useMemo(() => {
     const records = Object.values(student.attendance || {}).filter((r) => r !== "na");
@@ -2355,29 +2365,27 @@ export default function StudentDashboard({
     return Object.keys(student.attendance || {}).filter((date) => date.startsWith(monthKey) && student.attendance?.[date] !== "na").length;
   }, [student.attendance]);
 
-  const currentMonthStatus = student.feeMonths?.[currentMonthName] || (student.feePaidThisMonth ? "paid" : "unpaid");
+  const currentMonthStatus = getEvaluatedFeeStatus(student, currentMonthName).toLowerCase();
 
   useEffect(() => {
     setWeeklyAttendance(getWeeklyAttendanceDays(student));
   }, [student]);
 
   const feeStats = useMemo(() => {
-    const entries = student.feeMonths ? Object.entries(student.feeMonths) : [];
-    const paidCount = entries.filter(([, status]) => status === "paid").length;
-    const unpaidCount = entries.filter(([, status]) => status === "unpaid").length;
+    const ledger = getEvaluatedStudentLedger(student);
+    const entries = Object.values(ledger);
+    const paidCount = entries.filter((status) => status === "PAID").length;
+    const unpaidCount = entries.filter((status) => status === "UNPAID").length;
     return { paidCount, unpaidCount };
-  }, [student.feeMonths]);
+  }, [student]);
 
   const pendingMonths = useMemo(() => {
-    return Object.entries(student.feeMonths || {})
-      .filter(([, status]) => status === "unpaid")
-      .map(([month]) => month)
-      .sort((a, b) => a.localeCompare(b));
-  }, [student.feeMonths]);
+    return getPendingFeeMonths(student);
+  }, [student]);
 
   const totalPendingAmount = useMemo(() => {
-    return pendingMonths.length * (student.monthlyFee || 0);
-  }, [pendingMonths.length, student.monthlyFee]);
+    return calculateStudentOutstandingAmount(student);
+  }, [student]);
 
   const lastPaymentDate = useMemo(() => {
     const entries = Object.entries(student.feePaymentDates || {})

@@ -38,6 +38,12 @@ import { getUnpaidOverdueMonths, MONTH_NAMES, isFutureMonth, hasAttendedInMonth 
 import ConfirmDeleteModal from "./ConfirmDeleteModal";
 import { getMonthsUpToCurrent, ALL_ACADEMIC_MONTHS } from "../utils/monthHelper";
 import { getChapterProgressRecord, getStatusConfig, calculateSubjectProgress } from "../utils/chapterProgressHelper";
+import {
+  getEvaluatedFeeStatus,
+  getPendingFeeMonths,
+  calculateStudentOutstandingAmount,
+  generateWhatsAppBillingMessage
+} from "../utils/feeBillingHelper";
 
 interface StudentDetailsProps {
   student: Student;
@@ -134,7 +140,7 @@ export default function StudentDetails({
   isAdmin = true
 }: StudentDetailsProps) {
   const [activeTab, setActiveTab] = useState<"Profile" | "Progress" | "Attendance" | "Subjects" | "Fee">("Profile");
-  const [institutionName, setInstitutionName] = useState("Ingenious Study Circle");
+  const [institutionName, setInstitutionName] = useState("Sumit Tuition App");
   const [showStudentPassword, setShowStudentPassword] = useState(false);
   const [isEditingSubjects, setIsEditingSubjects] = useState(false);
   const [tempSubjects, setTempSubjects] = useState<string[]>([]);
@@ -247,13 +253,13 @@ export default function StudentDetails({
 
   // List of overdue unpaid months
   const overdueUnpaidMonths = useMemo(() => {
-    return getUnpaidOverdueMonths(student);
+    return getPendingFeeMonths(student);
   }, [student]);
 
   // Total pending amount
   const totalPendingAmount = useMemo(() => {
-    return overdueUnpaidMonths.length * student.monthlyFee;
-  }, [overdueUnpaidMonths, student.monthlyFee]);
+    return calculateStudentOutstandingAmount(student);
+  }, [student]);
 
   // Formatted months list for reminder message, e.g. "June, July"
   const formattedUnpaidMonthsText = useMemo(() => {
@@ -262,10 +268,8 @@ export default function StudentDetails({
 
   // Grammatically corrected billing message matching exact WhatsApp instruction template
   const whatsappMessage = useMemo(() => {
-    const pluralWord = overdueUnpaidMonths.length > 1 ? "months" : "month";
-    const monthsText = formattedUnpaidMonthsText || "Current Month";
-    return `Dear Parent, Student ${student.name} has Pending Fee payment for the ${pluralWord} of ${monthsText}, amounting to ₹ ${totalPendingAmount}. Kindly, make the payment. Thank you`;
-  }, [student.name, overdueUnpaidMonths.length, formattedUnpaidMonthsText, totalPendingAmount]);
+    return generateWhatsAppBillingMessage(student);
+  }, [student]);
 
   const initials = useMemo(() => {
     if (!student.name) return "?";
@@ -1542,15 +1546,10 @@ export default function StudentDetails({
                   return "unpaid";
                 };
 
-                const isJuneJoinedUpcomingOrPrevious = regYear === 2026 && regMonthIdx === 5 && month !== "June 2026";
-
-                const studentFeeMonths = student.feeMonths || {};
-                const status = isJuneJoinedUpcomingOrPrevious 
-                  ? "not-enrolled" 
-                  : (studentFeeMonths[month] !== undefined 
-                     ? studentFeeMonths[month] 
-                     : (isBeforeRegistration ? "not-enrolled" : (student.feeMonthsList ? "unselected" : getDefaultStatus(month))));
-                const isOverdue = status === "unpaid" && !isBeforeRegistration && !isFutureMonth(month) && hasAttendedInMonth(student, month);
+                const feeStatus = getEvaluatedFeeStatus(student, month);
+                const isPaid = feeStatus === "PAID";
+                const isUnpaid = feeStatus === "UNPAID";
+                const isNa = feeStatus === "N/A";
                 const paymentDate = student.feePaymentDates?.[month];
 
                 const formatPaymentDateStr = (dateStr?: string) => {
@@ -1566,10 +1565,8 @@ export default function StudentDetails({
                   <div 
                     key={month}
                     className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-slate-900 shadow-3xs ${
-                      isOverdue 
+                      isUnpaid 
                         ? "border-rose-100 dark:border-rose-950/40 bg-gradient-to-r from-white to-rose-50/10" 
-                        : isBeforeRegistration
-                        ? "border-slate-100 dark:border-slate-800 opacity-60"
                         : "border-slate-100 dark:border-slate-800"
                     }`}
                   >
@@ -1578,35 +1575,23 @@ export default function StudentDetails({
                         {month}
                       </span>
                       <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        {status === "paid" ? (
+                        {isPaid ? (
                           <span className="text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
                             <span>Paid {paymentDate ? `on ${formatPaymentDateStr(paymentDate)}` : ""}</span>
                           </span>
-                        ) : status === "na" ? (
+                        ) : isUnpaid ? (
+                          <span className="text-[10px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            <span>Unpaid Pending</span>
+                          </span>
+                        ) : (
                           <span className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">
                             Not Applicable (N/A)
                           </span>
-                        ) : status === "not-enrolled" ? (
-                          <span className="text-[10px] font-bold bg-slate-150 dark:bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
-                            Not Joined Yet
-                          </span>
-                        ) : status === "unselected" ? (
-                          <span className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full">
-                            No Status Selected
-                          </span>
-                        ) : isOverdue ? (
-                          <span className="text-[10px] font-bold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" />
-                            <span>Overdue Pending</span>
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
-                            Unpaid
-                          </span>
                         )}
-                        {status !== "paid" && status !== "na" && status !== "not-enrolled" && status !== "unselected" && (
-                          <span className="text-xs font-semibold text-slate-400 dark:text-slate-500">
+                        {isUnpaid && (
+                          <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">
                             ₹{student.monthlyFee} Due
                           </span>
                         )}
@@ -1622,7 +1607,7 @@ export default function StudentDetails({
                             onSetFeeStatus(month, "paid", today);
                           }}
                           className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-lg border transition-all cursor-pointer flex items-center gap-0.5 ${
-                            status === "paid"
+                            isPaid
                               ? "bg-emerald-600 border-emerald-600 text-white"
                               : "border-slate-200 dark:border-slate-800 hover:border-slate-300 text-slate-500 hover:text-slate-700 bg-white dark:bg-slate-900"
                           }`}
@@ -1634,8 +1619,8 @@ export default function StudentDetails({
                         <button
                           onClick={() => onSetFeeStatus(month, "unpaid")}
                           className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-lg border transition-all cursor-pointer flex items-center gap-0.5 ${
-                            status === "unpaid"
-                              ? (isOverdue ? "bg-rose-600 border-rose-600 text-white" : "bg-slate-700 border-slate-700 text-white")
+                            isUnpaid
+                              ? "bg-rose-600 border-rose-600 text-white"
                               : "border-slate-200 dark:border-slate-800 hover:border-slate-300 text-slate-500 hover:text-slate-700 bg-white dark:bg-slate-900"
                           }`}
                         >
@@ -1646,8 +1631,8 @@ export default function StudentDetails({
                         <button
                           onClick={() => onSetFeeStatus(month, "na")}
                           className={`px-2.5 py-1.5 text-[9px] font-extrabold uppercase rounded-lg border transition-all cursor-pointer flex items-center gap-0.5 ${
-                            status === "na"
-                              ? "bg-slate-400 border-slate-400 text-white"
+                            isNa
+                              ? "bg-slate-500 border-slate-500 text-white"
                               : "border-slate-200 dark:border-slate-800 hover:border-slate-300 text-slate-500 hover:text-slate-700 bg-white dark:bg-slate-900"
                           }`}
                         >
@@ -1686,7 +1671,7 @@ export default function StudentDetails({
                 </div>
                 <div className="flex flex-col gap-0.5">
                   <span className="text-[11px] font-extrabold text-slate-800 dark:text-slate-200">Scan to Settle ₹{totalPendingAmount} Due</span>
-                  <span className="text-[9px] text-slate-400 font-semibold">Valid for {institutionName} Tuition Ledger</span>
+                  <span className="text-[9px] text-slate-400 font-semibold">Valid for {institutionName}</span>
                 </div>
               </div>
             )}

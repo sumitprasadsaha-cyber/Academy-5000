@@ -17,101 +17,22 @@ interface StudentListProps {
 // Utility to find overdue months
 export const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
+import {
+  isCurrentOrFutureMonth,
+  hasAttendanceInMonth as hasAttendanceInMonthCentral,
+  getPendingFeeMonths
+} from "../utils/feeBillingHelper";
+
 export function isFutureMonth(monthYearStr: string, currentDateTime: Date = new Date()): boolean {
-  const [mName, yStr] = monthYearStr.split(" ");
-  const mIdx = MONTH_NAMES.indexOf(mName);
-  const year = parseInt(yStr);
-  if (mIdx === -1 || isNaN(year)) return false;
-
-  const currentYear = currentDateTime.getFullYear();
-  const currentMonthIdx = currentDateTime.getMonth();
-
-  if (year > currentYear) return true;
-  if (year === currentYear && mIdx > currentMonthIdx) return true;
-  return false;
+  return isCurrentOrFutureMonth(monthYearStr, currentDateTime);
 }
 
 export function hasAttendedInMonth(student: Student, monthYearStr: string): boolean {
-  const [mName, yStr] = monthYearStr.split(" ");
-  const mIdx = MONTH_NAMES.indexOf(mName);
-  const year = parseInt(yStr);
-  if (mIdx === -1 || isNaN(year)) return false;
-  
-  const prefix = `${year}-${String(mIdx + 1).padStart(2, "0")}-`;
-  const attendanceKeys = Object.keys(student.attendance || {});
-  
-  const monthKeys = attendanceKeys.filter(key => key.startsWith(prefix));
-  if (monthKeys.length === 0) {
-    // No attendance logs yet for this month. Default to true so we don't hide pending dues.
-    return true;
-  }
-  
-  // Return true if present at least once, or if marked N/A (holiday)
-  return monthKeys.some(key => student.attendance[key] === true || student.attendance[key] === "na");
+  return hasAttendanceInMonthCentral(student, monthYearStr);
 }
 
 export function getUnpaidOverdueMonths(student: Student, currentDateTime: Date = new Date()): string[] {
-  // Use student's feeMonthsList or default to months up to current
-  const months = student.feeMonthsList && student.feeMonthsList.length > 0
-    ? student.feeMonthsList
-    : getMonthsUpToCurrent();
-  
-  // Parse student registration date (default to "2026-06-01" for older/default students)
-  const regDate = student.registrationDate || "2026-06-01";
-  let regYear = 2026;
-  let regMonthIdx = 5;
-
-  if (regDate.includes("/")) {
-    const parts = regDate.split("/");
-    if (parts.length === 3) {
-      regYear = parseInt(parts[2]) || 2026;
-      regMonthIdx = (parseInt(parts[1]) || 6) - 1;
-    }
-  } else {
-    const parts = regDate.split("-");
-    if (parts.length === 3) {
-      regYear = parseInt(parts[0]) || 2026;
-      regMonthIdx = (parseInt(parts[1]) || 6) - 1;
-    }
-  }
-
-  // Fallback defaults for feeMonths
-  const feeMonths = student.feeMonths || {
-    "June 2026": student.id === "student-3" || student.id === "student-5" ? "unpaid" : "paid",
-    "July 2026": student.feePaidThisMonth ? "paid" : "unpaid"
-  };
-
-  const unpaidOverdue: string[] = [];
-
-  months.forEach(m => {
-    const [mName, yStr] = m.split(" ");
-    const mIdx = MONTH_NAMES.indexOf(mName);
-    const year = parseInt(yStr) || 2026;
-
-    if (mIdx !== -1 && !isNaN(year)) {
-      // 1. Do NOT calculate dues for future months that have not started
-      if (isFutureMonth(m, currentDateTime)) {
-        return;
-      }
-
-      // 2. Check if this month is before student's registration month
-      if (year < regYear || (year === regYear && mIdx < regMonthIdx)) {
-        return;
-      }
-
-      // 3. Only calculate dues for students who are coming based on attendance for that month
-      if (!hasAttendedInMonth(student, m)) {
-        return;
-      }
-
-      const status = feeMonths[m] || "unpaid";
-      if (status === "unpaid") {
-        unpaidOverdue.push(m);
-      }
-    }
-  });
-
-  return unpaidOverdue;
+  return getPendingFeeMonths(student, currentDateTime);
 }
 
 export default function StudentList({

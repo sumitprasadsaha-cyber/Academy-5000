@@ -4,7 +4,9 @@ export interface ClassNote {
   subject: string; // e.g. "Mathematics", "Science", "English", "Computer Science", "Indian Heritage and Culture", "Economics"
   chapterNo: number;
   chapterName: string;
-  partLabel?: string; // e.g. "Part 1", "Part 2", or empty
+  partLabel?: string; // e.g. "Topic 1", "Topic 2", or legacy part label
+  topicNo?: number | string; // e.g. 1, 2, "1.1"
+  topicName?: string; // e.g. "Introduction"
   pdfUrl: string;
   pdfFileName: string;
   storagePath?: string;
@@ -25,7 +27,9 @@ export interface ChapterNote {
   id: string;
   chapterNo: number; // Only number!
   chapterName: string; // Chapter name
-  partLabel?: string; // Optional part label, e.g. Part 1, Part 2
+  partLabel?: string; // Optional part label or legacy part label
+  topicNo?: number | string; // e.g. 1, 2
+  topicName?: string; // e.g. "Introduction"
   pdfUrl: string; // Base64 PDF content or URL
   pdfFileName: string; // Original PDF filename
   isCompleted?: boolean; // For tracking revision progress

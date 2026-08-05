@@ -25,6 +25,7 @@ import { ClassNote, Student } from "../types";
 import { uploadFileToSupabase, deleteFileFromStorage, downloadFileFromStorage } from "../lib/storageService";
 import { saveClassNoteDoc, deleteClassNoteDoc } from "../lib/firestoreService";
 import { groupClassNotesHierarchy, normalizeClassGrade, isClassGradeMatching, isSubjectMatching } from "../utils/classNoteHelper";
+import { getFormattedTopicLabel, isFileNameRedundant } from "../utils/chapterNotesHelper";
 import PdfViewer from "./PdfViewer";
 import { isImageFile } from "../lib/nativePdfService";
 
@@ -66,6 +67,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [customSubject, setCustomSubject] = useState("");
   const [chapterNo, setChapterNo] = useState<number | "">(1);
   const [chapterTitle, setChapterTitle] = useState("");
+  const [topicNo, setTopicNo] = useState("");
+  const [topicName, setTopicName] = useState("");
   const [partLabel, setPartLabel] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   
@@ -82,6 +85,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
   const [editSubject, setEditSubject] = useState("");
   const [editChapterNo, setEditChapterNo] = useState<number | "">(1);
   const [editChapterTitle, setEditChapterTitle] = useState("");
+  const [editTopicNo, setEditTopicNo] = useState("");
+  const [editTopicName, setEditTopicName] = useState("");
   const [editPartLabel, setEditPartLabel] = useState("");
   const [isEditSaving, setIsEditSaving] = useState(false);
 
@@ -322,13 +327,24 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setUploadProgress(15);
 
     try {
-      const cleanPartLabel = partLabel.trim();
+      const cleanTopicNo = topicNo.trim();
+      const cleanTopicName = topicName.trim();
+      let computedLabel = "";
+      if (cleanTopicNo && cleanTopicName) {
+        computedLabel = `Topic ${cleanTopicNo} – ${cleanTopicName}`;
+      } else if (cleanTopicNo) {
+        computedLabel = `Topic ${cleanTopicNo}`;
+      } else if (cleanTopicName) {
+        computedLabel = cleanTopicName;
+      }
+      const cleanPartLabel = computedLabel || partLabel.trim();
+
       let fileExtension = pdfFile.name.includes(".")
         ? pdfFile.name.split(".").pop()
         : (isImg ? "jpg" : "pdf");
       if (!fileExtension) fileExtension = isImg ? "jpg" : "pdf";
 
-      // Rename uploaded document or image to part as filled during its upload
+      // Rename uploaded document or image to topic as filled during its upload
       let renamedFileName = pdfFile.name;
       if (cleanPartLabel) {
         const hasExtension = cleanPartLabel.toLowerCase().endsWith(`.${fileExtension.toLowerCase()}`);
@@ -357,6 +373,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         chapterNo: Number(chapterNo),
         chapterName: chapterTitle.trim(),
         partLabel: cleanPartLabel ? cleanPartLabel : undefined,
+        topicNo: cleanTopicNo ? cleanTopicNo : undefined,
+        topicName: cleanTopicName ? cleanTopicName : undefined,
         pdfUrl: uploadRes.downloadUrl,
         pdfFileName: renamedFileName,
         storagePath: uploadRes.storagePath,
@@ -373,6 +391,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
       // Reset Form
       setChapterTitle("");
+      setTopicNo("");
+      setTopicName("");
       setPartLabel("");
       setPdfFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -398,6 +418,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
     setEditSubject(note.subject);
     setEditChapterNo(note.chapterNo);
     setEditChapterTitle(note.chapterName);
+    setEditTopicNo(note.topicNo !== undefined ? String(note.topicNo) : "");
+    setEditTopicName(note.topicName || "");
     setEditPartLabel(note.partLabel || "");
   };
 
@@ -411,7 +433,17 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
     setIsEditSaving(true);
     try {
-      const cleanPartLabel = editPartLabel.trim();
+      const cleanTopicNo = editTopicNo.trim();
+      const cleanTopicName = editTopicName.trim();
+      let computedLabel = "";
+      if (cleanTopicNo && cleanTopicName) {
+        computedLabel = `Topic ${cleanTopicNo} – ${cleanTopicName}`;
+      } else if (cleanTopicNo) {
+        computedLabel = `Topic ${cleanTopicNo}`;
+      } else if (cleanTopicName) {
+        computedLabel = cleanTopicName;
+      }
+      const cleanPartLabel = computedLabel || editPartLabel.trim();
       let updatedFileName = editingNote.pdfFileName;
 
       if (cleanPartLabel) {
@@ -432,6 +464,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
         chapterNo: Number(editChapterNo),
         chapterName: editChapterTitle.trim(),
         partLabel: cleanPartLabel ? cleanPartLabel : undefined,
+        topicNo: cleanTopicNo ? cleanTopicNo : undefined,
+        topicName: cleanTopicName ? cleanTopicName : undefined,
         pdfFileName: updatedFileName,
       };
 
@@ -804,7 +838,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                         </button>
 
                                         <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
-                                          {chGroup.parts.length} {chGroup.parts.length === 1 ? "Part" : "Parts"}
+                                          {chGroup.parts.length} {chGroup.parts.length === 1 ? "Topic" : "Topics"}
                                         </span>
                                         <button
                                           type="button"
@@ -834,14 +868,22 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                                               </div>
                                               <div className="min-w-0">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                  {note.partLabel && (
-                                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800/40">
-                                                      {note.partLabel}
+                                                  {note.partLabel ? (
+                                                    <>
+                                                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800/40">
+                                                        {getFormattedTopicLabel(note)}
+                                                      </span>
+                                                      {!isFileNameRedundant(note.partLabel, note.pdfFileName) && note.pdfFileName && (
+                                                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                                          {note.pdfFileName}
+                                                        </span>
+                                                      )}
+                                                    </>
+                                                  ) : (
+                                                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                                      {getFormattedTopicLabel(note) || note.pdfFileName || `${note.chapterName}.pdf`}
                                                     </span>
                                                   )}
-                                                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                                    {note.pdfFileName || `${note.chapterName}.pdf`}
-                                                  </span>
                                                 </div>
                                                 <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                                   <span className="text-[10px] text-slate-400">
@@ -1024,8 +1066,8 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                 )}
               </div>
 
-              {/* Chapter Number & Part */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Chapter Number & Title */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
                     Chapter Number <span className="text-rose-500">*</span>
@@ -1041,33 +1083,48 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
                   />
                 </div>
 
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                    Part <span className="text-slate-400 font-normal">(Optional)</span>
+                    Chapter Title <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
-                    value={partLabel}
-                    onChange={(e) => setPartLabel(e.target.value)}
-                    placeholder="e.g. Part 1"
+                    value={chapterTitle}
+                    onChange={(e) => setChapterTitle(e.target.value)}
+                    placeholder="e.g. Indian Culture"
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
                   />
                 </div>
               </div>
 
-              {/* Chapter Title */}
-              <div>
-                <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
-                  Chapter Title <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={chapterTitle}
-                  onChange={(e) => setChapterTitle(e.target.value)}
-                  placeholder="e.g. Indian Culture"
-                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+              {/* Topic (No.) & Topic (Name) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Topic (No.) <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={topicNo}
+                    onChange={(e) => setTopicNo(e.target.value)}
+                    placeholder="e.g. 1"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1">
+                    Topic (Name) <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={topicName}
+                    onChange={(e) => setTopicName(e.target.value)}
+                    placeholder="e.g. Introduction & Basics"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
 
               {/* PDF or Image File */}
@@ -1213,28 +1270,43 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
 
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                    Part (Optional)
+                    Chapter Title
                   </label>
                   <input
                     type="text"
-                    value={editPartLabel}
-                    onChange={(e) => setEditPartLabel(e.target.value)}
-                    placeholder="e.g. Part 1"
+                    value={editChapterTitle}
+                    onChange={(e) => setEditChapterTitle(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                  Chapter Title
-                </label>
-                <input
-                  type="text"
-                  value={editChapterTitle}
-                  onChange={(e) => setEditChapterTitle(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+                    Topic (No.) <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editTopicNo}
+                    onChange={(e) => setEditTopicNo(e.target.value)}
+                    placeholder="e.g. 1"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+                    Topic (Name) <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editTopicName}
+                    onChange={(e) => setEditTopicName(e.target.value)}
+                    placeholder="e.g. Introduction"
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-100 font-semibold"
+                  />
+                </div>
               </div>
 
               <div className="pt-3 flex justify-end gap-2 border-t border-slate-200 dark:border-slate-800">
@@ -1527,7 +1599,7 @@ export default function AdminNotesView({ notes, students = [], onRefresh }: Admi
               </div>
               <div>
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-slate-100">
-                  Delete Chapter Part?
+                  Delete Chapter Topic?
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                   This action cannot be undone.

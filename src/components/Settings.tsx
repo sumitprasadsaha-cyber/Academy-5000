@@ -67,7 +67,7 @@ export default function Settings({
   const [errorMsg, setErrorMsg] = useState("");
   const [selectedReportYear, setSelectedReportYear] = useState(2026);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  const [settingsInstName, setSettingsInstName] = useState("Ingenious Study Circle");
+  const [settingsInstName, setSettingsInstName] = useState("Sumit Tuition App");
 
   // Load Institution Name on mount
   useEffect(() => {
@@ -147,7 +147,19 @@ export default function Settings({
     setLoadingAdmins(true);
     try {
       const adminList = await getAllAdmins();
-      setAdmins(adminList);
+      const filtered = adminList.filter((a: any) => a.email?.toLowerCase() !== "sumitprasadsaha2@gmail.com");
+      const removedAdmins = adminList.filter((a: any) => a.email?.toLowerCase() === "sumitprasadsaha2@gmail.com");
+      for (const r of removedAdmins) {
+        const uid = r.uid || r.id;
+        if (uid) {
+          try {
+            await deleteUserDocument(uid);
+          } catch (err) {
+            console.warn("Failed deleting user doc for sumitprasadsaha2@gmail.com:", err);
+          }
+        }
+      }
+      setAdmins(filtered);
     } catch (e) {
       console.error("Error loading admins:", e);
     } finally {
@@ -160,7 +172,7 @@ export default function Settings({
   }, [isAdmin]);
 
   const ensureDefaultAdminAccount = async () => {
-    const defaultAdminEmails = ["sumitprasadsaha@gmail.com", "sumitprasadsaha2@gmail.com"];
+    const defaultAdminEmails = ["sumitprasadsaha@gmail.com"];
     const defaultPassword = "utyac48@jjE";
     const auth = await getFirebaseAuth();
     if (!auth) return;
@@ -682,7 +694,7 @@ export default function Settings({
               <div className="flex flex-col sm:flex-row gap-2 items-center mt-1">
                 <input
                   type="text"
-                  placeholder="e.g. Ingenious Study Circle"
+                  placeholder="e.g. Sumit Tuition App"
                   value={settingsInstName}
                   onChange={(e) => setSettingsInstName(e.target.value)}
                   className="flex-1 w-full px-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-slate-800 dark:text-slate-100 text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-blue-500/10 h-[42px]"
@@ -994,7 +1006,7 @@ export default function Settings({
           <span className="text-xl sm:text-2xl font-black tracking-wide normal-case text-blue-600 dark:text-blue-400" style={{ fontFamily: "'Dancing Script', cursive" }}>
             Developed and Designed by Sumit
           </span>
-          <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 dark:text-slate-450 uppercase">Academy Connect</span>
+          <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 dark:text-slate-450 uppercase">Sumit Tuition App</span>
           <span className="text-[8px] font-extrabold uppercase tracking-[0.25em] text-slate-400 dark:text-slate-500">Version {APP_VERSION}</span>
           <span className="text-[8px] font-black tracking-widest text-slate-500 dark:text-slate-400 uppercase">—POWERED BY ANDROID—</span>
         </div>

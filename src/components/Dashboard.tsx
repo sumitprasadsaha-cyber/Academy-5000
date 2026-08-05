@@ -25,6 +25,12 @@ import {
 } from "lucide-react";
 import { Student } from "../types";
 import { getUnpaidOverdueMonths, hasAttendedInMonth, isFutureMonth } from "./StudentList";
+import {
+  getEvaluatedFeeStatus,
+  getEvaluatedStudentLedger,
+  getPendingFeeMonths,
+  getPendingStudentsList
+} from "../utils/feeBillingHelper";
 import { getInstitutionName, subscribeToAnnouncements, saveAnnouncementDoc, deleteAnnouncementDoc } from "../lib/firestoreService";
 
 interface DashboardProps {
@@ -54,7 +60,7 @@ export default function Dashboard({
   onNavigateToStudentDetails,
   onToggleAttendance
 }: DashboardProps) {
-  const [instName, setInstName] = useState("Ingenious Study Circle");
+  const [instName, setInstName] = useState("Sumit Tuition App");
 
   useEffect(() => {
     let active = true;
@@ -177,32 +183,14 @@ export default function Dashboard({
     let totalCollectedAllMonths = 0;
 
     students.forEach(student => {
-      // 1. Dynamic target fee calculation (for current month July 2026 if they are registered)
-      const regDate = student.registrationDate || "2026-06-01";
-      const [regYearStr, regMonthStr] = regDate.split("-");
-      const regYear = parseInt(regYearStr) || 2026;
-      const regMonthIdx = (parseInt(regMonthStr) || 6) - 1; // 0-indexed
-
-      // July 2026 is year 2026, month index 6
-      const isEnrolledInJuly = regYear < 2026 || (regYear === 2026 && regMonthIdx <= 6);
-
-      if (isEnrolledInJuly && hasAttendedInMonth(student, "July 2026")) {
-        totalTarget += student.monthlyFee;
-        const feeMonths = student.feeMonths || {};
-        const status = feeMonths["July 2026"] || (student.feePaidThisMonth ? "paid" : "unpaid");
-        if (status === "paid") {
-          totalCollected += student.monthlyFee;
-        }
-      }
-
-      // 2. Overdue calculation using getUnpaidOverdueMonths
-      const overdueMonths = getUnpaidOverdueMonths(student);
-      if (overdueMonths.length > 0) {
+      // 1. Pending fee months and outstanding dues
+      const pendingMonths = getPendingFeeMonths(student);
+      if (pendingMonths.length > 0) {
         pendingFeeCount++;
-        remainingDue += overdueMonths.length * student.monthlyFee;
+        remainingDue += pendingMonths.length * (student.monthlyFee || 0);
       }
 
-      // 3. Attendance calculations for today's dynamic date key
+      // 2. Attendance calculations for today's dynamic date key
       const attVal = student.attendance?.[todayIsoKey];
       if (attVal === true) {
         attendancePresentCount++;
@@ -212,17 +200,19 @@ export default function Dashboard({
         attendanceNotMarkedCount++;
       }
 
-      // 4. Sum up all payments actually made by each student for each month
-      const feeMonths = student.feeMonths || {};
-      Object.keys(feeMonths).forEach(month => {
-        if (feeMonths[month] === "paid") {
-          totalCollectedAllMonths += student.monthlyFee;
+      // 3. Sum up all payments actually made by each student for each month
+      const ledger = getEvaluatedStudentLedger(student);
+      Object.keys(ledger).forEach(month => {
+        if (ledger[month] === "PAID") {
+          totalCollectedAllMonths += student.monthlyFee || 0;
         }
       });
     });
 
+    totalCollected = totalCollectedAllMonths;
+    totalTarget = totalCollected + remainingDue;
     const totalRevenue = totalCollectedAllMonths;
-    const collectionPercentage = totalTarget > 0 ? Math.round((totalCollected / totalTarget) * 100) : 0;
+    const collectionPercentage = totalTarget > 0 ? Math.round((totalCollected / totalTarget) * 100) : 100;
 
     return {
       totalEnrolled,
@@ -916,10 +906,10 @@ export default function Dashboard({
 
                       const isBeforeRegistration = year < regYear || (year === regYear && mIdx < regMonthIdx);
                       if (!isBeforeRegistration) {
-                        const status = s.feeMonths?.[month];
-                        if (status === "paid") {
+                        const status = getEvaluatedFeeStatus(s, month);
+                        if (status === "PAID") {
                           monthCollection += s.monthlyFee;
-                        } else if (!isFutureMonth(month) && hasAttendedInMonth(s, month) && status !== "na") {
+                        } else if (status === "UNPAID") {
                           monthDues += s.monthlyFee;
                         }
                       }
@@ -987,8 +977,10 @@ export default function Dashboard({
                   <div className="flex flex-col gap-2">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Current Month Status</span>
                     {students.map(s => {
-                      const feeMonths = s.feeMonths || {};
-                      const isPaid = feeMonths["July 2026"] === "paid" || s.feePaidThisMonth;
+                      const currentMonthName = `${new Date().toLocaleString("en-US", { month: "long" })} ${new Date().getFullYear()}`;
+                      const status = getEvaluatedFeeStatus(s, currentMonthName);
+                      const isPaid = status === "PAID";
+                      const isUnpaid = status === "UNPAID";
                       return (
                         <div 
                           key={s.id}
@@ -1001,9 +993,11 @@ export default function Dashboard({
                           <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
                             isPaid 
                               ? "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400" 
-                              : "bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400"
+                              : isUnpaid
+                              ? "bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400"
+                              : "bg-slate-100 dark:bg-slate-800 text-slate-500"
                           }`}>
-                            {isPaid ? "Paid" : "Unpaid"}
+                            {isPaid ? "Paid" : isUnpaid ? "Unpaid" : "N/A"}
                           </span>
                         </div>
                       );

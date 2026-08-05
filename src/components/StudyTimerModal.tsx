@@ -17,6 +17,12 @@ import {
   VolumeX
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import {
+  scheduleTimerNotification,
+  cancelTimerNotification,
+  registerAppStateChangeListener,
+  initTimerNotifications
+} from "../lib/timerNotificationService";
 
 interface StudyTimerModalProps {
   isOpen: boolean;
@@ -48,11 +54,21 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   const [timerInitialSeconds, setTimerInitialSeconds] = useState<number>(
     saved?.timerInitialSeconds || 25 * 60
   );
-  
-  // Calculate remaining seconds if there was an active running timer
+  const [timerStartTimestamp, setTimerStartTimestamp] = useState<number | null>(
+    saved?.timerStartTimestamp || null
+  );
+  const [timerDuration, setTimerDuration] = useState<number>(
+    saved?.timerDuration || saved?.timerInitialSeconds || 25 * 60
+  );
+  const [expectedFinishTimestamp, setExpectedFinishTimestamp] = useState<number | null>(
+    saved?.expectedFinishTimestamp || saved?.targetEndTime || null
+  );
+
+  // Calculate remaining seconds using real system time (expectedFinishTimestamp - currentSystemTime)
   const initialLeft = () => {
-    if (saved?.isTimerRunning && saved?.targetEndTime) {
-      const rem = Math.max(0, Math.ceil((saved.targetEndTime - Date.now()) / 1000));
+    const finishTime = saved?.expectedFinishTimestamp || saved?.targetEndTime;
+    if (saved?.isTimerRunning && finishTime) {
+      const rem = Math.max(0, Math.ceil((finishTime - Date.now()) / 1000));
       return rem;
     }
     if (saved?.timerSecondsLeft !== undefined) {
@@ -63,10 +79,16 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(initialLeft());
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(
-    saved?.isTimerRunning && saved?.targetEndTime ? (saved.targetEndTime > Date.now()) : false
+    saved?.isTimerRunning && (saved?.expectedFinishTimestamp || saved?.targetEndTime)
+      ? ((saved.expectedFinishTimestamp || saved.targetEndTime) > Date.now())
+      : false
   );
   const [isAlarmRinging, setIsAlarmRinging] = useState<boolean>(
-    saved?.isAlarmRinging || (saved?.isTimerRunning && saved?.targetEndTime && saved.targetEndTime <= Date.now()) || false
+    saved?.isAlarmRinging ||
+      (saved?.isTimerRunning &&
+        (saved?.expectedFinishTimestamp || saved?.targetEndTime) &&
+        (saved.expectedFinishTimestamp || saved.targetEndTime) <= Date.now()) ||
+      false
   );
 
   // Custom setup inputs (in minutes)
@@ -82,7 +104,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   // Refs for interval loops & audio & background worker
   const timerIntervalRef = useRef<any>(null);
   const timerEndTimeRef = useRef<number | null>(
-    saved?.targetEndTime || (saved?.isTimerRunning ? Date.now() + (saved?.timerSecondsLeft || 0) * 1000 : null)
+    saved?.expectedFinishTimestamp || saved?.targetEndTime || (saved?.isTimerRunning ? Date.now() + (saved?.timerSecondsLeft || 0) * 1000 : null)
   );
   const workerRef = useRef<Worker | null>(null);
   const stopwatchIntervalRef = useRef<any>(null);
@@ -93,13 +115,17 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   const saveStateToStorage = (overrides?: Record<string, any>) => {
     if (typeof localStorage === "undefined") return;
     try {
+      const finishTime = overrides?.expectedFinishTimestamp ?? expectedFinishTimestamp ?? timerEndTimeRef.current;
       const stateToSave = {
         mode,
         timerInitialSeconds,
-        timerSecondsLeft,
+        timerStartTimestamp: overrides?.timerStartTimestamp ?? timerStartTimestamp,
+        timerDuration: overrides?.timerDuration ?? timerDuration,
+        expectedFinishTimestamp: finishTime,
+        targetEndTime: finishTime,
+        timerSecondsLeft: finishTime ? Math.max(0, Math.ceil((finishTime - Date.now()) / 1000)) : timerSecondsLeft,
         isTimerRunning,
         isAlarmRinging,
-        targetEndTime: timerEndTimeRef.current,
         stopwatchMs,
         isStopwatchRunning,
         laps,
@@ -119,6 +145,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const stopAlarm = () => {
     setIsAlarmRinging(false);
+    cancelTimerNotification();
     saveStateToStorage({ isAlarmRinging: false });
     if (alarmIntervalRef.current) {
       clearInterval(alarmIntervalRef.current);
@@ -274,17 +301,22 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
         timerEndTimeRef.current = Date.now() + timerSecondsLeft * 1000;
       }
 
+      const targetEnd = timerEndTimeRef.current;
+
       saveStateToStorage({
         isTimerRunning: true,
-        targetEndTime: timerEndTimeRef.current,
+        targetEndTime: targetEnd,
         timerSecondsLeft
       });
+
+      // Schedule high-priority native notification for background/locked screen/native PDF viewer
+      scheduleTimerNotification(targetEnd);
 
       // Start Web Worker countdown
       if (workerRef.current) {
         workerRef.current.postMessage({
           action: "start",
-          targetEndTime: timerEndTimeRef.current
+          targetEndTime: targetEnd
         });
       }
 
@@ -307,7 +339,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
       updateTimer();
       timerIntervalRef.current = setInterval(updateTimer, 500);
 
-      // Lifecycle sync when app comes to foreground or resumes from PDF viewer / background
+      // Lifecycle sync when app comes to foreground or resumes from native PDF viewer / background
       const handleSync = () => {
         if (!timerEndTimeRef.current) return;
         const now = Date.now();
@@ -322,6 +354,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
         }
       };
 
+      const cleanupAppStateListener = registerAppStateChangeListener(handleSync);
       window.addEventListener("focus", handleSync);
       document.addEventListener("visibilitychange", handleSync);
       window.addEventListener("pageshow", handleSync);
@@ -331,6 +364,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
         if (workerRef.current) {
           workerRef.current.postMessage({ action: "stop" });
         }
+        cleanupAppStateListener();
         window.removeEventListener("focus", handleSync);
         document.removeEventListener("visibilitychange", handleSync);
         window.removeEventListener("pageshow", handleSync);
@@ -340,6 +374,7 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
       if (workerRef.current) {
         workerRef.current.postMessage({ action: "stop" });
       }
+      cancelTimerNotification();
     }
   }, [isTimerRunning]);
 
@@ -392,19 +427,27 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   // --- TIMER CONTROLS ---
   const handleStartTimer = () => {
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    initTimerNotifications();
 
     const secs = timerSecondsLeft <= 0 ? timerInitialSeconds : timerSecondsLeft;
+    const nowMs = Date.now();
+    const finishMs = nowMs + secs * 1000;
+
     setTimerSecondsLeft(secs);
-    const targetEnd = Date.now() + secs * 1000;
-    timerEndTimeRef.current = targetEnd;
+    setTimerStartTimestamp(nowMs);
+    setTimerDuration(secs);
+    setExpectedFinishTimestamp(finishMs);
+    timerEndTimeRef.current = finishMs;
+
     stopAlarm();
     setIsTimerRunning(true);
+    scheduleTimerNotification(finishMs);
     saveStateToStorage({
       isTimerRunning: true,
-      targetEndTime: targetEnd,
+      timerStartTimestamp: nowMs,
+      timerDuration: secs,
+      expectedFinishTimestamp: finishMs,
+      targetEndTime: finishMs,
       timerSecondsLeft: secs,
       isAlarmRinging: false
     });
@@ -412,9 +455,12 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const handlePauseTimer = () => {
     timerEndTimeRef.current = null;
+    setExpectedFinishTimestamp(null);
     setIsTimerRunning(false);
+    cancelTimerNotification();
     saveStateToStorage({
       isTimerRunning: false,
+      expectedFinishTimestamp: null,
       targetEndTime: null,
       timerSecondsLeft
     });
@@ -422,11 +468,16 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
 
   const handleResetTimer = () => {
     timerEndTimeRef.current = null;
+    setTimerStartTimestamp(null);
+    setExpectedFinishTimestamp(null);
     setIsTimerRunning(false);
     stopAlarm();
+    cancelTimerNotification();
     setTimerSecondsLeft(timerInitialSeconds);
     saveStateToStorage({
       isTimerRunning: false,
+      timerStartTimestamp: null,
+      expectedFinishTimestamp: null,
       targetEndTime: null,
       timerSecondsLeft: timerInitialSeconds,
       isAlarmRinging: false
@@ -436,15 +487,22 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
   const handleSetPreset = (minutes: number) => {
     const secs = minutes * 60;
     timerEndTimeRef.current = null;
+    setTimerStartTimestamp(null);
+    setExpectedFinishTimestamp(null);
     setIsTimerRunning(false);
     stopAlarm();
+    cancelTimerNotification();
     setTimerInitialSeconds(secs);
+    setTimerDuration(secs);
     setTimerSecondsLeft(secs);
     setCustomMinutes(minutes);
     saveStateToStorage({
       isTimerRunning: false,
+      timerStartTimestamp: null,
+      expectedFinishTimestamp: null,
       targetEndTime: null,
       timerInitialSeconds: secs,
+      timerDuration: secs,
       timerSecondsLeft: secs,
       isAlarmRinging: false
     });
@@ -455,14 +513,21 @@ export default function StudyTimerModal({ isOpen, onClose, onTimerRunningChange 
     setCustomMinutes(valid);
     const secs = valid * 60;
     timerEndTimeRef.current = null;
+    setTimerStartTimestamp(null);
+    setExpectedFinishTimestamp(null);
     setIsTimerRunning(false);
     stopAlarm();
+    cancelTimerNotification();
     setTimerInitialSeconds(secs);
+    setTimerDuration(secs);
     setTimerSecondsLeft(secs);
     saveStateToStorage({
       isTimerRunning: false,
+      timerStartTimestamp: null,
+      expectedFinishTimestamp: null,
       targetEndTime: null,
       timerInitialSeconds: secs,
+      timerDuration: secs,
       timerSecondsLeft: secs,
       isAlarmRinging: false
     });

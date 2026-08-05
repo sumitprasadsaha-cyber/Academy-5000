@@ -62,7 +62,7 @@ export default function AIInsights({ students }: AIInsightsProps) {
     {
       id: "welcome-1",
       role: "model",
-      text: "Hello Admin! I'm your Academy Connect AI Assistant. Ask me anything about student performance, pending fees, attendance risks, or class progress.",
+      text: "Hello Admin! I'm your Sumit Tuition App AI Assistant. Ask me anything about student performance, pending fees, attendance risks, or class progress.",
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -175,7 +175,7 @@ export default function AIInsights({ students }: AIInsightsProps) {
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Academy Connect AI - ${title}`,
+          title: `Sumit Tuition App AI - ${title}`,
           text: text,
         });
       } catch (e) {
@@ -204,7 +204,7 @@ export default function AIInsights({ students }: AIInsightsProps) {
       const doc = new jsPDF();
       doc.setFont("helvetica", "bold");
       doc.setFontSize(16);
-      doc.text(`Academy Connect - ${title}`, 14, 18);
+      doc.text(`Sumit Tuition App - ${title}`, 14, 18);
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
@@ -221,7 +221,7 @@ export default function AIInsights({ students }: AIInsightsProps) {
       const splitLines = doc.splitTextToSize(cleanText, 180);
 
       doc.text(splitLines, 14, 36);
-      doc.save(`AcademyConnect_${title.replace(/\s+/g, "_")}.pdf`);
+      doc.save(`SumitTuitionApp_${title.replace(/\s+/g, "_")}.pdf`);
     } catch (err) {
       console.error("PDF export error:", err);
       alert("Failed to export PDF. Copying text instead.");
@@ -710,7 +710,7 @@ export default function AIInsights({ students }: AIInsightsProps) {
                   {
                     id: `welcome-${Date.now()}`,
                     role: "model",
-                    text: "Chat context cleared. What would you like to ask about Academy Connect?",
+                    text: "Chat context cleared. What would you like to ask about Sumit Tuition App?",
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                   },
                 ])

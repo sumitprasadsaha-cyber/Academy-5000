@@ -17,9 +17,14 @@ const STORAGE_KEY_INSTITUTION_NAME = "tuition_institution_name";
 
 function getCachedInstitutionName(): string {
   if (typeof window === "undefined") {
-    return "Ingenious Study Circle";
+    return "Sumit Tuition App";
   }
-  return localStorage.getItem(STORAGE_KEY_INSTITUTION_NAME) || "Ingenious Study Circle";
+  const cached = localStorage.getItem(STORAGE_KEY_INSTITUTION_NAME);
+  if (!cached || cached === "Ingenious Study Circle") {
+    localStorage.setItem(STORAGE_KEY_INSTITUTION_NAME, "Sumit Tuition App");
+    return "Sumit Tuition App";
+  }
+  return cached;
 }
 
 function setCachedInstitutionName(name: string) {
@@ -528,7 +533,7 @@ export async function checkAnyAdminExists(): Promise<boolean> {
  * Saves the Institution Name.
  */
 export async function saveInstitutionName(name: string): Promise<void> {
-  const trimmed = name.trim() || "Ingenious Study Circle";
+  const trimmed = name.trim() || "Sumit Tuition App";
   setCachedInstitutionName(trimmed);
   try {
     const db = await getFirebaseDb();
@@ -555,7 +560,7 @@ export async function getInstitutionName(): Promise<string> {
     const settingsDocRef = doc(db, "settings", "institution");
     const snap = await getDoc(settingsDocRef);
     if (snap.exists()) {
-      const value = snap.data().name || "Ingenious Study Circle";
+      const value = snap.data().name || "Sumit Tuition App";
       setCachedInstitutionName(value);
       return value;
     }
@@ -575,17 +580,39 @@ export async function getAllAdmins(): Promise<any[]> {
     if (!db) {
       const cachedUsers = localStorage.getItem(STORAGE_KEY_USERS);
       const users = cachedUsers ? JSON.parse(cachedUsers) : {};
-      return Object.values(users).filter((u: any) => u.role === "Admin" || u.role === "admin");
+      const filtered: any[] = [];
+      let changed = false;
+      for (const uid of Object.keys(users)) {
+        const u = users[uid];
+        if (u?.email?.toLowerCase() === "sumitprasadsaha2@gmail.com") {
+          delete users[uid];
+          changed = true;
+        } else if (u?.role === "Admin" || u?.role === "admin") {
+          filtered.push(u);
+        }
+      }
+      if (changed) {
+        localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
+      }
+      return filtered;
     }
     const usersColRef = collection(db, "users");
     const snap = await getDocs(usersColRef);
     const admins: any[] = [];
-    snap.forEach((d) => {
+    for (const d of snap.docs) {
       const u = d.data();
+      if (u.email?.toLowerCase() === "sumitprasadsaha2@gmail.com") {
+        try {
+          await deleteDoc(doc(db, "users", d.id));
+        } catch (e) {
+          console.warn("Failed deleting sumitprasadsaha2@gmail.com doc:", e);
+        }
+        continue;
+      }
       if (u.role === "Admin" || u.role === "admin") {
         admins.push({ ...u, uid: u.uid || d.id, id: d.id });
       }
-    });
+    }
     return admins;
   } catch (err) {
     console.error("Error fetching all admins:", err);

@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import { Student } from "../types";
 import { isFutureMonth, hasAttendedInMonth } from "../components/StudentList";
 import { saveAndOpenGeneratedPdf } from "../lib/nativePdfService";
+import { getEvaluatedFeeStatus } from "./feeBillingHelper";
 
 // Generate a list of the 13 months for a March-to-March session
 export function getSessionMonths(startYear: number): string[] {
@@ -82,7 +83,7 @@ export async function generateAnnualReport(startYear: number, students: Student[
 
   const sessionMonths = getSessionMonths(startYear);
   const sessionLabel = `March ${startYear} - March ${startYear + 1}`;
-  const instName = localStorage.getItem("tuition_institution_name") || "Ingenious Study Circle";
+  const instName = localStorage.getItem("tuition_institution_name") || "Sumit Tuition App";
 
   let totalSessionRevenue = 0;
   let totalSessionDues = 0;
@@ -133,14 +134,14 @@ export async function generateAnnualReport(startYear: number, students: Student[
         const classGrade = student?.classGrade || "N/A";
         const phone = student?.phone || "N/A";
 
-        monthTarget += studentFee;
-        const feeMonths = student.feeMonths || {};
-        const status = feeMonths[monthStr];
+        const status = getEvaluatedFeeStatus(student, monthStr);
 
-        if (status === "paid") {
+        if (status === "PAID") {
+          monthTarget += studentFee;
           monthCollected += studentFee;
           paidList.push({ name: studentName, classGrade, fee: studentFee });
-        } else if (!isFutureMonth(monthStr) && hasAttendedInMonth(student, monthStr) && (status === "unpaid" || (!status && monthStr !== "na"))) {
+        } else if (status === "UNPAID") {
+          monthTarget += studentFee;
           monthDues += studentFee;
           unpaidList.push({ name: studentName, classGrade, fee: studentFee, phone });
         }

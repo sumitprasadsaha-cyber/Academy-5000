@@ -50,12 +50,12 @@ export default function Login({ onLoginSuccess, onInstitutionNameLoaded }: Login
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isInitializing, setIsInitializing] = useState(true);
-  const [currentInstName, setCurrentInstName] = useState("Ingenious Study Circle");
+  const [currentInstName, setCurrentInstName] = useState("Sumit Tuition App");
 
   useEffect(() => {
     const ensureDefaultAdmin = async () => {
       try {
-        const defaultAdminEmails = ["sumitprasadsaha@gmail.com", "sumitprasadsaha2@gmail.com"];
+        const defaultAdminEmails = ["sumitprasadsaha@gmail.com"];
         const admins = await getAllAdmins();
         
         for (const email of defaultAdminEmails) {
@@ -147,8 +147,8 @@ export default function Login({ onLoginSuccess, onInstitutionNameLoaded }: Login
         userCredential = await signInWithEmailAndPassword(auth, emailInput, passwordVal);
       } catch (authErr: any) {
         // Auto-recovery for default admin accounts or registered users
-        const defaultAdminEmails = ["sumitprasadsaha@gmail.com", "sumitprasadsaha2@gmail.com"];
-        const isDefaultAdmin = defaultAdminEmails.includes(emailInput) || emailInput.startsWith("sumitprasadsaha") || passwordVal === "utyac48@jjE";
+        const defaultAdminEmails = ["sumitprasadsaha@gmail.com"];
+        const isDefaultAdmin = emailInput.toLowerCase() === "sumitprasadsaha@gmail.com";
         
         if (isDefaultAdmin) {
           try {
